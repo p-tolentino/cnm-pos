@@ -1051,7 +1051,7 @@ export default function POSSystem() {
                     key={method}
                     variant={paymentMethod === method ? "default" : "outline"}
                     size="lg"
-                    className={`h-20 min-w-[45%] ${paymentMethod === method && "ring ring-primary ring-offset-1"} ${paymentMethod === method ? (paymentMethod === "Cash" ? "bg-emerald-500 text-foreground" : "bg-blue-500") : ""}`}
+                    className={`h-20 min-w-[45%] hover:bg-amber-400/80 hover:text-foreground ${paymentMethod === method && "ring ring-primary ring-offset-1"} ${paymentMethod === method ? (paymentMethod === "Cash" ? "bg-emerald-500 text-foreground" : "bg-blue-500") : ""}`}
                     onClick={() => setPaymentMethod(method)}
                   >
                     {method}

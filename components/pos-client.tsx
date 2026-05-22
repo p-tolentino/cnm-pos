@@ -66,7 +66,7 @@ const products: Product[] = [
   {
     id: "solo-meal",
     name: "Solo Meal",
-    price: 125,
+    price: 130,
     label: "SOLO",
     category: "chicken",
     hasFlavors: true,
@@ -82,7 +82,7 @@ const products: Product[] = [
   {
     id: "6pcs",
     name: "6pcs",
-    price: 310,
+    price: 300,
     label: "6 PC",
     category: "chicken",
     hasFlavors: true,
@@ -102,6 +102,14 @@ const products: Product[] = [
     label: "RICE",
     category: "extra",
     hasFlavors: false,
+  },
+  {
+    id: "extra-sauce",
+    name: "Extra Sauce",
+    price: 40,
+    label: "SAUCE",
+    category: "extra",
+    hasFlavors: true,
   },
 ]
 

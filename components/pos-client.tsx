@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useCallback } from "react"
+import React, { useState, useCallback, useEffect } from "react"
 import {
   Drawer,
   DrawerContent,
@@ -30,6 +30,21 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  ArrowLeft,
+  CreditCard,
+  DollarSign,
+  Menu,
+  ReceiptIcon,
+  TrendingUp,
+} from "lucide-react"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
+import {
   ShoppingCart,
   Plus,
   Minus,
@@ -46,8 +61,12 @@ import Image from "next/image"
 import { openShift, closeShift, type Shift } from "@/actions/shifts"
 import {
   createOrderWithItems,
+  DateFilter,
+  getOrders,
+  getSalesSummary,
   type OrderInput,
   type OrderItemInput,
+  type OrderWithItems,
 } from "@/actions/orders"
 
 // ----------------------------------------------------------------------
@@ -204,6 +223,11 @@ const flavorOptions: FlavorOption[] = [
     borderClass: "border-[#baff42]/40",
   },
 ] as const
+
+const getFlavorAbbr = (flavorName: string): string => {
+  const found = flavorOptions.find((f) => f.name === flavorName)
+  return found?.abbr || flavorName
+}
 
 type Flavor = (typeof flavorOptions)[number]["name"]
 type DiscountType = "custom" | "senior" | "pwd"
@@ -507,12 +531,42 @@ export default function POSClient({ initialShift }: POSClientProps) {
   const [paymentMethod, setPaymentMethod] = useState("")
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<"all" | "chicken" | "extra">("all")
+  const [menuSheetOpen, setMenuSheetOpen] = useState(false)
+  const [sheetView, setSheetView] = useState<"menu" | "transactions" | "sales">(
+    "menu"
+  )
+  const [transactions, setTransactions] = useState<OrderWithItems[]>([])
+  const [salesSummary, setSalesSummary] = useState<{
+    totalSales: number
+    orderCount: number
+    averageOrderValue: number
+    paymentBreakdown: Record<string, number>
+  } | null>(null)
+  const [selectedOrder, setSelectedOrder] = useState<OrderWithItems | null>(
+    null
+  )
+  const [orderDetailOpen, setOrderDetailOpen] = useState(false)
+  const [isLoadingTransactions, setIsLoadingTransactions] = useState(false)
+  const [isLoadingSales, setIsLoadingSales] = useState(false)
+  const [dateFilter, setDateFilter] = useState<"all" | "today">("all")
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
 
   const discountItem = cart.find((item) => item.id === discountItemId)
 
   const [cashAmountPaid, setCashAmountPaid] = useState<string>("")
   const [closeShiftDialogOpen, setCloseShiftDialogOpen] = useState(false)
+
+  const loadTransactions = async (filter: DateFilter = "today") => {
+    setIsLoadingTransactions(true)
+    const data = await getOrders(filter)
+    setTransactions(data)
+    setIsLoadingTransactions(false)
+  }
+
+  const loadSalesSummary = async () => {
+    const data = await getSalesSummary(dateFilter)
+    setSalesSummary(data)
+  }
 
   // ---- Shift actions (Server Actions) ----
   const handleOpenShift = async (name: string) => {
@@ -771,6 +825,27 @@ export default function POSClient({ initialShift }: POSClientProps) {
     }
   }
 
+  useEffect(() => {
+    if (!menuSheetOpen) return
+    if (sheetView === "transactions") {
+      const fetch = async () => {
+        setIsLoadingTransactions(true)
+        const data = await getOrders(dateFilter)
+        setTransactions(data)
+        setIsLoadingTransactions(false)
+      }
+      fetch()
+    } else if (sheetView === "sales") {
+      const fetch = async () => {
+        setIsLoadingSales(true)
+        const data = await getSalesSummary(dateFilter)
+        setSalesSummary(data)
+        setIsLoadingSales(false)
+      }
+      fetch()
+    }
+  }, [sheetView, dateFilter, menuSheetOpen])
+
   // ---- Render ----
   if (!shift) {
     return <OpenShiftDialog onOpenShift={handleOpenShift} />
@@ -792,18 +867,292 @@ export default function POSClient({ initialShift }: POSClientProps) {
                 className="h-8 w-auto sm:h-10"
                 priority
               />
-              POS
             </h1>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCloseShiftDialogOpen(true)}
-              disabled={isClosingShift}
-              className="gap-2"
+            <Sheet
+              open={menuSheetOpen}
+              onOpenChange={(open) => {
+                setMenuSheetOpen(open)
+                if (!open) {
+                  // Reset view when sheet closes
+                  setTimeout(() => setSheetView("menu"), 200)
+                }
+              }}
             >
-              <LogOut className="h-4 w-4" />
-              Close Shift ({shift.cashier_name})
-            </Button>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <Menu className="h-5 w-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-[90vw] p-0 sm:w-100">
+                {sheetView === "menu" && (
+                  <div className="flex h-full flex-col">
+                    <SheetHeader className="border-b p-4">
+                      <SheetTitle>Menu</SheetTitle>
+                    </SheetHeader>
+                    <div className="flex-1 space-y-3 p-4">
+                      <Button
+                        variant="ghost"
+                        className="h-12 w-full justify-start text-base"
+                        onClick={async () => {
+                          await loadTransactions()
+                          setSheetView("transactions")
+                        }}
+                      >
+                        <ReceiptIcon className="mr-3 h-5 w-5" />
+                        Transactions
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="h-12 w-full justify-start text-base"
+                        onClick={async () => {
+                          await loadSalesSummary()
+                          setSheetView("sales")
+                        }}
+                      >
+                        <TrendingUp className="mr-3 h-5 w-5" />
+                        Sales
+                      </Button>
+                    </div>
+                    <div className="mt-auto border-t p-4">
+                      <Button
+                        variant="destructive"
+                        className="w-full"
+                        onClick={() => {
+                          setMenuSheetOpen(false)
+                          setCloseShiftDialogOpen(true)
+                        }}
+                      >
+                        <LogOut className="mr-2 h-4 w-4" />
+                        Close Shift
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {sheetView === "transactions" && (
+                  <div className="flex h-full flex-col">
+                    <div className="flex shrink-0 items-center gap-2 border-b p-4">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setSheetView("menu")}
+                      >
+                        <ArrowLeft className="h-5 w-5" />
+                      </Button>
+                      <SheetTitle>Transactions</SheetTitle>
+                    </div>
+
+                    <div className="flex shrink-0 gap-2 border-b p-4">
+                      <Button
+                        variant={dateFilter === "all" ? "default" : "outline"}
+                        size="sm"
+                        className="flex-1"
+                        disabled={isLoadingTransactions}
+                        onClick={async () => {
+                          setDateFilter("all")
+                          setIsLoadingTransactions(true)
+                          const data = await getOrders("all")
+                          setTransactions(data)
+                          setIsLoadingTransactions(false)
+                        }}
+                      >
+                        All Orders
+                      </Button>
+                      <Button
+                        variant={dateFilter === "today" ? "default" : "outline"}
+                        size="sm"
+                        className="flex-1"
+                        disabled={isLoadingTransactions}
+                        onClick={async () => {
+                          setDateFilter("today")
+                          setIsLoadingTransactions(true)
+                          const data = await getOrders("today")
+                          setTransactions(data)
+                          setIsLoadingTransactions(false)
+                        }}
+                      >
+                        Today Only
+                      </Button>
+                    </div>
+
+                    <div className="min-h-0 flex-1">
+                      <ScrollArea className="h-full">
+                        <div className="p-4">
+                          {isLoadingTransactions ? (
+                            <div className="flex justify-center py-8">
+                              <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                            </div>
+                          ) : transactions.length === 0 ? (
+                            <div className="py-8 text-center text-muted-foreground">
+                              {dateFilter === "today"
+                                ? "No orders today"
+                                : "No transactions yet"}
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              {transactions.map((order) => (
+                                <div
+                                  key={order.id}
+                                  className="cursor-pointer space-y-2 rounded-lg border p-3 transition-colors hover:bg-muted/50"
+                                  onClick={() => {
+                                    setSelectedOrder(order)
+                                    setOrderDetailOpen(true)
+                                  }}
+                                >
+                                  <div className="flex items-start justify-between">
+                                    <div>
+                                      <p className="font-semibold">
+                                        #{order.order_number}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        {new Date(
+                                          order.created_at
+                                        ).toLocaleString()}
+                                      </p>
+                                    </div>
+                                    <p className="font-bold">
+                                      ₱{formatPrice(order.total)}
+                                    </p>
+                                  </div>
+                                  <div className="space-y-0.5 text-sm">
+                                    <p>Cashier: {order.cashier_name}</p>
+                                    <p>Customer: {order.customer_name}</p>
+                                    <p>Payment: {order.payment_method}</p>
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {order.items.length} item(s)
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  </div>
+                )}
+
+                {sheetView === "sales" && (
+                  <div className="flex h-full flex-col">
+                    <div className="flex shrink-0 items-center gap-2 border-b p-4">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setSheetView("menu")}
+                      >
+                        <ArrowLeft className="h-5 w-5" />
+                      </Button>
+                      <SheetTitle>Sales Summary</SheetTitle>
+                    </div>
+
+                    <div className="flex shrink-0 gap-2 border-b p-4">
+                      <Button
+                        variant={dateFilter === "all" ? "default" : "outline"}
+                        size="sm"
+                        className="flex-1"
+                        disabled={isLoadingSales}
+                        onClick={async () => {
+                          setDateFilter("all")
+                          setIsLoadingSales(true)
+                          const data = await getSalesSummary("all")
+                          setSalesSummary(data)
+                          setIsLoadingSales(false)
+                        }}
+                      >
+                        All Orders
+                      </Button>
+                      <Button
+                        variant={dateFilter === "today" ? "default" : "outline"}
+                        size="sm"
+                        className="flex-1"
+                        disabled={isLoadingSales}
+                        onClick={async () => {
+                          setDateFilter("today")
+                          setIsLoadingSales(true)
+                          const data = await getSalesSummary("today")
+                          setSalesSummary(data)
+                          setIsLoadingSales(false)
+                        }}
+                      >
+                        Today Only
+                      </Button>
+                    </div>
+
+                    <div className="min-h-0 flex-1">
+                      <ScrollArea className="h-full">
+                        <div className="p-4">
+                          {isLoadingSales ? (
+                            <div className="flex justify-center py-8">
+                              <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                            </div>
+                          ) : salesSummary ? (
+                            <div className="space-y-5">
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="rounded-lg bg-primary/10 p-4 text-center">
+                                  <DollarSign className="mx-auto mb-2 h-6 w-6 text-primary" />
+                                  <p className="text-2xl font-bold">
+                                    ₱{formatPrice(salesSummary.totalSales)}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Total Sales
+                                  </p>
+                                </div>
+                                <div className="rounded-lg bg-secondary/10 p-4 text-center">
+                                  <ReceiptIcon className="mx-auto mb-2 h-6 w-6" />
+                                  <p className="text-2xl font-bold">
+                                    {salesSummary.orderCount}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Orders
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="rounded-lg border p-4">
+                                <p className="mb-2 text-sm font-medium">
+                                  Average Order Value
+                                </p>
+                                <p className="text-xl font-bold">
+                                  ₱{formatPrice(salesSummary.averageOrderValue)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border p-4">
+                                <p className="mb-2 text-sm font-medium">
+                                  Payment Methods
+                                </p>
+                                <div className="space-y-2">
+                                  {Object.entries(
+                                    salesSummary.paymentBreakdown
+                                  ).map(([method, amount]) => (
+                                    <div
+                                      key={method}
+                                      className="flex items-center justify-between"
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <CreditCard className="h-4 w-4" />
+                                        <span className="text-sm">
+                                          {method}
+                                        </span>
+                                      </div>
+                                      <span className="font-semibold">
+                                        ₱{formatPrice(amount)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="py-8 text-center text-muted-foreground">
+                              No sales data available
+                            </div>
+                          )}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  </div>
+                )}
+              </SheetContent>
+            </Sheet>
           </div>
           <Separator />
           <div className="my-4 flex gap-2">
@@ -1600,6 +1949,77 @@ export default function POSClient({ initialShift }: POSClientProps) {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={orderDetailOpen} onOpenChange={setOrderDetailOpen}>
+          <DialogContent className="max-h-[80vh] max-w-sm overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Order #{selectedOrder?.order_number}</DialogTitle>
+              <div className="mt-1 flex justify-between space-y-0.5">
+                <div className="flex flex-col text-muted-foreground">
+                  <p>
+                    <span className="font-semibold">Cashier:</span>{" "}
+                    {selectedOrder?.cashier_name}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Date:</span>{" "}
+                    {selectedOrder &&
+                      new Date(selectedOrder.created_at).toLocaleString()}
+                  </p>
+                </div>
+                <div className="flex flex-col text-muted-foreground">
+                  <p>
+                    <span className="font-semibold">Customer:</span>{" "}
+                    {selectedOrder?.customer_name}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Payment:</span>{" "}
+                    {selectedOrder?.payment_method}
+                  </p>
+                </div>
+              </div>
+            </DialogHeader>
+
+            <Separator />
+
+            {/* Order items – with quantity badge, no "x" */}
+            <div className="space-y-3 pt-2">
+              {selectedOrder?.items.map((item, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between gap-2"
+                >
+                  <div className="flex flex-1 items-center gap-2">
+                    {/* Quantity badge */}
+                    <span className="inline-flex min-w-9 items-center justify-center rounded-md bg-primary px-2 py-1 text-sm font-extrabold text-white tabular-nums">
+                      {item.quantity}
+                    </span>
+                    <div className="flex-1">
+                      <span className="text-sm font-medium">
+                        {item.product_name}
+                      </span>
+                      {item.flavors && item.flavors.length > 0 && (
+                        <span className="ml-1">
+                          (
+                          {item.flavors.map((f) => getFlavorAbbr(f)).join(", ")}
+                          )
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="font-mono font-medium">
+                    ₱{formatPrice(item.total_price)}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <Separator />
+            <div className="flex justify-between text-base font-bold">
+              <span>Total</span>
+              <span>₱{formatPrice(selectedOrder?.total || 0)}</span>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         <AlertDialog
           open={closeShiftDialogOpen}
           onOpenChange={setCloseShiftDialogOpen}
@@ -1613,8 +2033,13 @@ export default function POSClient({ initialShift }: POSClientProps) {
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={handleCloseShiftConfirm}>
+              <AlertDialogCancel disabled={isClosingShift}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleCloseShiftConfirm}
+                disabled={isClosingShift}
+              >
                 Yes, Close Shift
               </AlertDialogAction>
             </AlertDialogFooter>

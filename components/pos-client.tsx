@@ -31,11 +31,10 @@ import {
 } from "@/components/ui/dialog"
 import {
   ArrowLeft,
+  Banknote,
   CheckCircle,
-  CreditCard,
-  DollarSign,
   Menu,
-  Printer,
+  PhilippinePeso,
   ReceiptIcon,
   TrendingUp,
   XCircle,
@@ -1262,7 +1261,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
                           {/* Total Sales & Orders */}
                           <div className="grid grid-cols-2 gap-3">
                             <div className="rounded-lg bg-primary/10 p-3 text-center sm:p-4">
-                              <DollarSign className="mx-auto mb-1 h-5 w-5 text-primary sm:h-6 sm:w-6" />
+                              <PhilippinePeso className="mx-auto mb-1 h-5 w-5 text-primary sm:h-6 sm:w-6" />
                               <p className="text-base font-bold break-all sm:text-xl">
                                 ₱{formatPrice(salesSummary?.totalSales || 0)}
                               </p>
@@ -1329,7 +1328,18 @@ export default function POSClient({ initialShift }: POSClientProps) {
                                     className="flex items-center justify-between text-xs sm:text-sm"
                                   >
                                     <div className="flex items-center gap-1.5 sm:gap-2">
-                                      <CreditCard className="h-3 w-3 sm:h-4 sm:w-4" />
+                                      {method === "GCash" ? (
+                                        <div className="relative h-4 w-4 shrink-0 sm:h-5 sm:w-5">
+                                          <Image
+                                            alt="GCash"
+                                            src="/gcash.svg"
+                                            fill
+                                            className="object-contain"
+                                          />
+                                        </div>
+                                      ) : (
+                                        <Banknote className="h-4 w-4 shrink-0 sm:h-5 sm:w-5" />
+                                      )}
                                       <span>{method}</span>
                                     </div>
                                     <span className="font-semibold break-all">

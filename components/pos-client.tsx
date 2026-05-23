@@ -74,7 +74,6 @@ import {
   type OrderItemInput,
   type OrderWithItems,
 } from "@/actions/orders"
-import { getQueue } from "@/lib/offlineQueue"
 
 // ----------------------------------------------------------------------
 // Types & Constants
@@ -946,37 +945,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
     if (!discountItemId) return
     clearItemDiscount(discountItemId)
     setDiscountDialogOpen(false)
-  }
-
-  const handlePrintReceipt = () => {
-    const printContent = document.getElementById("receipt-content")
-    if (!printContent) return
-
-    const originalTitle = document.title
-    document.title = `Receipt_${new Date().toLocaleString()}`
-
-    const printWindow = window.open("", "_blank")
-    if (printWindow) {
-      printWindow.document.write(`
-      <html>
-        <head>
-          <title>Order Receipt</title>
-          <style>
-            body { font-family: monospace; width: 300px; margin: 0 auto; padding: 20px; }
-            .receipt-header { text-align: center; margin-bottom: 20px; }
-            .item { display: flex; justify-content: space-between; margin: 4px 0; }
-            .total { font-weight: bold; margin-top: 10px; }
-            hr { margin: 10px 0; }
-          </style>
-        </head>
-        <body>${printContent.innerHTML}</body>
-      </html>
-    `)
-      printWindow.document.close()
-      printWindow.print()
-      printWindow.close()
-    }
-    document.title = originalTitle
   }
 
   // ---- Save order (Server Action) ----

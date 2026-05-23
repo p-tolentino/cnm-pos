@@ -540,6 +540,8 @@ export default function POSClient({ initialShift }: POSClientProps) {
     totalSales: number
     orderCount: number
     averageOrderValue: number
+    bestSellerProduct: string
+    mostPopularFlavor: string
     paymentBreakdown: Record<string, number>
   } | null>(null)
   const [selectedOrder, setSelectedOrder] = useState<OrderWithItems | null>(
@@ -1080,72 +1082,85 @@ export default function POSClient({ initialShift }: POSClientProps) {
 
                     <div className="min-h-0 flex-1">
                       <ScrollArea className="h-full">
-                        <div className="p-4">
-                          {isLoadingSales ? (
-                            <div className="flex justify-center py-8">
-                              <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                        <div className="space-y-5 p-4">
+                          {/* Existing cards */}
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="rounded-lg bg-primary/10 p-4 text-center">
+                              <DollarSign className="mx-auto mb-2 h-6 w-6 text-primary" />
+                              <p className="text-2xl font-bold">
+                                ₱{formatPrice(salesSummary?.totalSales || 0)}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Total Sales
+                              </p>
                             </div>
-                          ) : salesSummary ? (
-                            <div className="space-y-5">
-                              <div className="grid grid-cols-2 gap-4">
-                                <div className="rounded-lg bg-primary/10 p-4 text-center">
-                                  <DollarSign className="mx-auto mb-2 h-6 w-6 text-primary" />
-                                  <p className="text-2xl font-bold">
-                                    ₱{formatPrice(salesSummary.totalSales)}
-                                  </p>
-                                  <p className="text-xs text-muted-foreground">
-                                    Total Sales
-                                  </p>
-                                </div>
-                                <div className="rounded-lg bg-secondary/10 p-4 text-center">
-                                  <ReceiptIcon className="mx-auto mb-2 h-6 w-6" />
-                                  <p className="text-2xl font-bold">
-                                    {salesSummary.orderCount}
-                                  </p>
-                                  <p className="text-xs text-muted-foreground">
-                                    Orders
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="rounded-lg border p-4">
-                                <p className="mb-2 text-sm font-medium">
-                                  Average Order Value
-                                </p>
-                                <p className="text-xl font-bold">
-                                  ₱{formatPrice(salesSummary.averageOrderValue)}
-                                </p>
-                              </div>
-                              <div className="rounded-lg border p-4">
-                                <p className="mb-2 text-sm font-medium">
-                                  Payment Methods
-                                </p>
-                                <div className="space-y-2">
-                                  {Object.entries(
-                                    salesSummary.paymentBreakdown
-                                  ).map(([method, amount]) => (
-                                    <div
-                                      key={method}
-                                      className="flex items-center justify-between"
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <CreditCard className="h-4 w-4" />
-                                        <span className="text-sm">
-                                          {method}
-                                        </span>
-                                      </div>
-                                      <span className="font-semibold">
-                                        ₱{formatPrice(amount)}
-                                      </span>
+                            <div className="rounded-lg bg-secondary/10 p-4 text-center">
+                              <ReceiptIcon className="mx-auto mb-2 h-6 w-6" />
+                              <p className="text-2xl font-bold">
+                                {salesSummary?.orderCount || 0}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Orders
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="rounded-lg border p-4">
+                            <p className="mb-2 text-sm font-medium">
+                              Average Order Value
+                            </p>
+                            <p className="text-xl font-bold">
+                              ₱
+                              {formatPrice(
+                                salesSummary?.averageOrderValue || 0
+                              )}
+                            </p>
+                          </div>
+
+                          {/* New: Best Seller & Top Flavor */}
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="rounded-lg border p-4 text-center">
+                              <p className="mb-1 text-xs text-muted-foreground">
+                                Best Seller
+                              </p>
+                              <p className="text-base font-bold">
+                                {salesSummary?.bestSellerProduct || "—"}
+                              </p>
+                            </div>
+                            <div className="rounded-lg border p-4 text-center">
+                              <p className="mb-1 text-xs text-muted-foreground">
+                                Top Flavor
+                              </p>
+                              <p className="text-base font-bold">
+                                {salesSummary?.mostPopularFlavor || "—"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="rounded-lg border p-4">
+                            <p className="mb-2 text-sm font-medium">
+                              Payment Methods
+                            </p>
+                            <div className="space-y-2">
+                              {salesSummary &&
+                                Object.entries(
+                                  salesSummary.paymentBreakdown
+                                ).map(([method, amount]) => (
+                                  <div
+                                    key={method}
+                                    className="flex items-center justify-between"
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <CreditCard className="h-4 w-4" />
+                                      <span className="text-sm">{method}</span>
                                     </div>
-                                  ))}
-                                </div>
-                              </div>
+                                    <span className="font-semibold">
+                                      ₱{formatPrice(amount)}
+                                    </span>
+                                  </div>
+                                ))}
                             </div>
-                          ) : (
-                            <div className="py-8 text-center text-muted-foreground">
-                              No sales data available
-                            </div>
-                          )}
+                          </div>
                         </div>
                       </ScrollArea>
                     </div>

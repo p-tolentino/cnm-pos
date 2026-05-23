@@ -189,5 +189,61 @@ export async function getSalesSummary(filter: DateFilter = "all") {
       (paymentBreakdown[order.payment_method] || 0) + order.total
   })
 
-  return { totalSales, orderCount, averageOrderValue, paymentBreakdown }
+  // Product sales quantity
+  const productSales: Record<string, number> = {}
+  // Flavor counts
+  const flavorCounts: Record<string, number> = {}
+
+  orders.forEach((order) => {
+    order.items.forEach((item) => {
+      productSales[item.product_name] =
+        (productSales[item.product_name] || 0) + item.quantity
+      if (item.flavors && item.flavors.length > 0) {
+        item.flavors.forEach((flavor) => {
+          flavorCounts[flavor] = (flavorCounts[flavor] || 0) + 1
+        })
+      }
+    })
+  })
+
+  // Find best seller product – handle ties
+  let bestSellerProduct = "-"
+  let maxQty = 0
+  let topProducts: string[] = []
+  Object.entries(productSales).forEach(([name, qty]) => {
+    if (qty > maxQty) {
+      maxQty = qty
+      topProducts = [name]
+    } else if (qty === maxQty && qty > 0) {
+      topProducts.push(name)
+    }
+  })
+  if (topProducts.length === 1) {
+    bestSellerProduct = topProducts[0]
+  }
+
+  // Find most popular flavor – handle ties
+  let mostPopularFlavor = "-"
+  let maxFlavorCount = 0
+  let topFlavors: string[] = []
+  Object.entries(flavorCounts).forEach(([flavor, count]) => {
+    if (count > maxFlavorCount) {
+      maxFlavorCount = count
+      topFlavors = [flavor]
+    } else if (count === maxFlavorCount && count > 0) {
+      topFlavors.push(flavor)
+    }
+  })
+  if (topFlavors.length === 1) {
+    mostPopularFlavor = topFlavors[0]
+  }
+
+  return {
+    totalSales,
+    orderCount,
+    averageOrderValue,
+    paymentBreakdown,
+    bestSellerProduct,
+    mostPopularFlavor,
+  }
 }

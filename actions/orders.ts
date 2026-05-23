@@ -253,6 +253,28 @@ export async function getSalesSummary(filter: DateFilter = "all") {
   }
 }
 
+export async function getShiftSalesTotal(shiftId: string): Promise<number> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("orders")
+    .select("total")
+    .eq("shift_id", shiftId)
+
+  if (error) return 0
+  return data.reduce((sum, o) => sum + o.total, 0)
+}
+
+export async function getShiftCashSalesTotal(shiftId: string): Promise<number> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("orders")
+    .select("total")
+    .eq("shift_id", shiftId)
+    .eq("payment_method", "Cash")
+  if (error) return 0
+  return data.reduce((sum, o) => sum + o.total, 0)
+}
+
 export async function voidOrder(
   orderId: string
 ): Promise<{ success: boolean }> {

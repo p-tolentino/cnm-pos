@@ -32,6 +32,7 @@ import {
 import {
   ArrowLeft,
   Banknote,
+  Calendar,
   CheckCircle,
   Menu,
   PhilippinePeso,
@@ -61,21 +62,40 @@ import { Input } from "@/components/ui/input"
 import Image from "next/image"
 import { useSwipeable } from "react-swipeable"
 
-import { openShift, closeShift, type Shift } from "@/actions/shifts"
+import {
+  openShift,
+  closeShift,
+  type Shift,
+  getClosedShifts,
+  ShiftFullDetails,
+  getShiftFullDetails,
+} from "@/actions/shifts"
 import {
   completeOrder,
   createOrderWithItems,
   DateFilter,
   getOrders,
   getSalesSummary,
+  getShiftCashSalesTotal,
   voidOrder,
   type OrderInput,
   type OrderItemInput,
   type OrderWithItems,
 } from "@/actions/orders"
+import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+} from "@/components/ui/input-otp"
+import { REGEXP_ONLY_DIGITS } from "input-otp"
+import {
+  addCashTransaction,
+  CashTransaction,
+  getCashTransactions,
+} from "@/actions/cashTransactions"
 
 // ----------------------------------------------------------------------
-// Types & Constants
+// Types & Constants (unchanged)
 // ----------------------------------------------------------------------
 type Product = {
   id: string
@@ -255,7 +275,7 @@ function formatPrice(amount: number): string {
 }
 
 // ----------------------------------------------------------------------
-// Cart Content Component
+// Cart Content Component (with shiftActive prop)
 // ----------------------------------------------------------------------
 interface CartContentProps {
   cart: CartItem[]
@@ -268,6 +288,7 @@ interface CartContentProps {
   handleCheckout: () => void
   onEditItem: (id: string) => void
   onClearCart: () => void
+  shiftActive: boolean
 }
 
 function CartContent({
@@ -281,6 +302,7 @@ function CartContent({
   handleCheckout,
   onEditItem,
   onClearCart,
+  shiftActive,
 }: CartContentProps) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -289,7 +311,7 @@ function CartContent({
           Your Cart ({cart.reduce((sum, i) => sum + i.quantity, 0)})
         </h2>
         <div className="flex items-center gap-2">
-          {cart.length > 0 && (
+          {cart.length > 0 && shiftActive && (
             <Button
               variant="ghost"
               size="sm"
@@ -320,11 +342,11 @@ function CartContent({
             {cart.map((item) => (
               <div
                 key={item.id}
-                className="flex items-center gap-2 rounded-lg border p-2"
+                className={`flex items-center gap-2 rounded-lg border p-2 ${!shiftActive ? "opacity-60" : ""}`}
               >
                 <div
-                  className="min-w-0 flex-1 cursor-pointer"
-                  onClick={() => onEditItem(item.id)}
+                  className={`min-w-0 flex-1 ${shiftActive ? "cursor-pointer" : ""}`}
+                  onClick={() => shiftActive && onEditItem(item.id)}
                 >
                   <p className="truncate text-sm font-medium">
                     {item.product.name}
@@ -372,7 +394,8 @@ function CartContent({
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7"
-                    onClick={() => openDiscountDialog(item.id)}
+                    onClick={() => shiftActive && openDiscountDialog(item.id)}
+                    disabled={!shiftActive}
                   >
                     <Percent className="h-3.5 w-3.5" />
                   </Button>
@@ -380,7 +403,7 @@ function CartContent({
                     variant="outline"
                     size="icon"
                     className="h-7 w-7"
-                    disabled={item.quantity <= 1}
+                    disabled={!shiftActive || item.quantity <= 1}
                     onClick={() => updateQuantity(item.id, -1)}
                   >
                     <Minus className="h-3.5 w-3.5" />
@@ -392,6 +415,7 @@ function CartContent({
                     variant="outline"
                     size="icon"
                     className="h-7 w-7"
+                    disabled={!shiftActive}
                     onClick={() => updateQuantity(item.id, 1)}
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -400,6 +424,7 @@ function CartContent({
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7 text-destructive"
+                    disabled={!shiftActive}
                     onClick={() => removeItem(item.id)}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -444,7 +469,7 @@ function CartContent({
         <Button
           className="mt-4 w-full"
           size="lg"
-          disabled={cart.length === 0}
+          disabled={cart.length === 0 || !shiftActive}
           onClick={handleCheckout}
         >
           <Receipt className="mr-2 h-5 w-5" />
@@ -456,46 +481,72 @@ function CartContent({
 }
 
 // ----------------------------------------------------------------------
-// Shift Opening Dialog
+// Shift Opening Dialog (OTP + Starting Cash)
 // ----------------------------------------------------------------------
 interface OpenShiftDialogProps {
-  onOpenShift: (name: string) => Promise<void>
+  open: boolean
+  onOpenShift: (pin: string, startingCash: number) => Promise<void>
+  onClose: () => void
 }
 
-function OpenShiftDialog({ onOpenShift }: OpenShiftDialogProps) {
-  const [name, setName] = useState("")
+function OpenShiftDialog({ open, onOpenShift, onClose }: OpenShiftDialogProps) {
+  const [pin, setPin] = useState("")
+  const [startingCash, setStartingCash] = useState("")
   const [isLoading, setIsLoading] = useState(false)
 
   const handleSubmit = async () => {
-    if (!name.trim()) return
+    if (pin.length !== 4) return
+    const cash = parseFloat(startingCash)
+    if (isNaN(cash) || cash < 0) return
     setIsLoading(true)
-    await onOpenShift(name.trim())
+    await onOpenShift(pin, cash)
     setIsLoading(false)
+    onClose()
   }
 
   return (
-    <Dialog open={true} onOpenChange={() => {}}>
-      <DialogContent
-        className="max-w-sm"
-        onInteractOutside={(e) => e.preventDefault()}
-      >
+    <Dialog open={open} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>Open Shift</DialogTitle>
           <DialogDescription>
-            Enter cashier name to start a new shift
+            Enter your 4‑digit PIN and starting cash amount
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3 py-2">
-          <Input
-            placeholder="Cashier Name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            autoFocus
-          />
+        <div className="space-y-4 py-2">
+          <div>
+            <label className="text-sm font-medium">Employee PIN</label>
+            <InputOTP
+              maxLength={4}
+              pattern={REGEXP_ONLY_DIGITS}
+              value={pin}
+              onChange={setPin}
+              className="mt-1"
+            >
+              <InputOTPGroup>
+                <InputOTPSlot index={0} />
+                <InputOTPSlot index={1} />
+                <InputOTPSlot index={2} />
+                <InputOTPSlot index={3} />
+              </InputOTPGroup>
+            </InputOTP>
+          </div>
+          <div>
+            <label className="text-sm font-medium">Starting Cash (₱)</label>
+            <Input
+              type="number"
+              placeholder="0.00"
+              value={startingCash}
+              onChange={(e) => setStartingCash(e.target.value)}
+              min="0"
+              step="0.01"
+              className="mt-1"
+            />
+          </div>
           <Button
             className="w-full"
             onClick={handleSubmit}
-            disabled={isLoading}
+            disabled={isLoading || pin.length !== 4 || !startingCash}
           >
             {isLoading ? "Opening..." : "Open Shift"}
           </Button>
@@ -505,6 +556,9 @@ function OpenShiftDialog({ onOpenShift }: OpenShiftDialogProps) {
   )
 }
 
+// ----------------------------------------------------------------------
+// Transaction Card (swipe actions)
+// ----------------------------------------------------------------------
 interface TransactionCardProps {
   order: OrderWithItems
   onComplete: () => void
@@ -535,36 +589,45 @@ const TransactionCard = ({
 
   const swipeDistance = "160px"
 
-  const getHighlightColor = (items: OrderWithItems["items"]): string => {
-    let priority: "senior" | "pwd" | "custom" | null = null
+  const getPaymentBorderClass = (paymentMethod: string): string => {
+    return paymentMethod === "GCash" ? "border-l-4 border-l-blue-500" : ""
+  }
+
+  const getDiscountHighlightForOrderNumber = (
+    items: OrderWithItems["items"]
+  ): string => {
+    let discountType: "senior" | "pwd" | "custom" | null = null
     for (const item of items) {
-      if (item.discount_type === "senior") return "orange"
-      if (item.discount_type === "pwd") priority = "pwd"
-      if (item.discount_type === "custom" && !priority) priority = "custom"
+      if (item.discount_type === "senior") {
+        discountType = "senior"
+        break
+      }
+      if (item.discount_type === "pwd" && !discountType) {
+        discountType = "pwd"
+      }
+      if (item.discount_type === "custom" && !discountType) {
+        discountType = "custom"
+      }
     }
-    if (priority === "pwd") return "blue"
-    if (priority === "custom") return "yellow"
-    return ""
+    if (discountType === "senior") return "bg-red-100 text-red-800"
+    if (discountType === "pwd") return "bg-blue-100 text-blue-800"
+    if (discountType === "custom") return "bg-yellow-100 text-yellow-800"
+    return "bg-gray-200 text-gray-800"
   }
 
-  const highlight = getHighlightColor(order.items)
-
-  const highlightMap: Record<string, string> = {
-    orange: "border-l-4 border-l-orange-500",
-    blue: "border-l-4 border-l-blue-500",
-    yellow: "border-l-4 border-l-yellow-500",
-  }
-  const highlightClass = highlightMap[highlight] || "bg-background"
-
-  const mutedClass = !isPending ? "opacity-60 grayscale-[0.2]" : ""
+  const borderClass = getPaymentBorderClass(order.payment_method)
+  const orderNumberHighlightClass = getDiscountHighlightForOrderNumber(
+    order.items
+  )
+  const mutedClass = !isPending ? "opacity-60" : ""
 
   return (
     <div
-      className={`relative overflow-hidden rounded-lg border ${highlightClass} ${mutedClass}`}
+      className={`relative overflow-hidden rounded-lg border ${borderClass} ${mutedClass}`}
     >
       <div
         {...(isActive ? handlers : {})}
-        className={`relative z-10 cursor-pointer bg-background p-3 transition-transform duration-200`}
+        className="relative z-10 cursor-pointer bg-background p-3 transition-transform duration-200"
         style={{
           transform:
             isActive && isRevealed
@@ -572,15 +635,17 @@ const TransactionCard = ({
               : "translateX(0)",
         }}
         onClick={() => {
-          if (!isRevealed) {
-            onViewDetail(order)
-          }
+          if (!isRevealed) onViewDetail(order)
         }}
       >
         <div className="flex items-start justify-between">
           <div>
-            <p className="font-semibold">#{order.order_number}</p>
-            <p className="text-xs text-muted-foreground">
+            <p
+              className={`inline-block rounded px-1.5 py-0.5 font-semibold ${orderNumberHighlightClass}`}
+            >
+              #{order.order_number}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
               {new Date(order.created_at).toLocaleString()}
             </p>
           </div>
@@ -619,7 +684,7 @@ const TransactionCard = ({
         </div>
       </div>
 
-      {isPending && (
+      {isActive && (
         <div className="absolute top-0 right-0 bottom-0 flex">
           <Button
             variant="destructive"
@@ -656,9 +721,8 @@ interface POSClientProps {
 }
 
 export default function POSClient({ initialShift }: POSClientProps) {
-  // Shift state (sync with server data)
   const [shift, setShift] = useState<Shift | null>(initialShift)
-  const [isClosingShift, setIsClosingShift] = useState(false)
+  const [openShiftDialogOpen, setOpenShiftDialogOpen] = useState(false)
 
   // POS state
   const [cart, setCart] = useState<CartItem[]>([])
@@ -680,9 +744,9 @@ export default function POSClient({ initialShift }: POSClientProps) {
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<"all" | "chicken" | "extra">("all")
   const [menuSheetOpen, setMenuSheetOpen] = useState(false)
-  const [sheetView, setSheetView] = useState<"menu" | "transactions" | "sales">(
-    "menu"
-  )
+  const [sheetView, setSheetView] = useState<
+    "menu" | "transactions" | "sales" | "shifts"
+  >("menu")
   const [transactions, setTransactions] = useState<OrderWithItems[]>([])
   const [voidOrderId, setVoidOrderId] = useState<string | null>(null)
   const [completeOrderId, setCompleteOrderId] = useState<string | null>(null)
@@ -700,13 +764,33 @@ export default function POSClient({ initialShift }: POSClientProps) {
   const [orderDetailOpen, setOrderDetailOpen] = useState(false)
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(false)
   const [isLoadingSales, setIsLoadingSales] = useState(false)
-  const [dateFilter, setDateFilter] = useState<"all" | "today">("all")
+  const [dateFilter, setDateFilter] = useState<"all" | "today">("today")
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
 
   const discountItem = cart.find((item) => item.id === discountItemId)
 
   const [cashAmountPaid, setCashAmountPaid] = useState<string>("")
   const [closeShiftDialogOpen, setCloseShiftDialogOpen] = useState(false)
+  const [endingCash, setEndingCash] = useState("")
+  const [isClosingShift, setIsClosingShift] = useState(false)
+
+  const [cashTxModalOpen, setCashTxModalOpen] = useState(false)
+  const [cashTxType, setCashTxType] = useState<"pay_in" | "pay_out">("pay_in")
+  const [cashTxAmount, setCashTxAmount] = useState("")
+  const [cashTxReason, setCashTxReason] = useState("")
+  const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>(
+    []
+  )
+  const [shiftTotalSales, setShiftTotalSales] = useState(0)
+
+  const [closedShifts, setClosedShifts] = useState<Shift[]>([])
+  const [isLoadingShifts, setIsLoadingShifts] = useState(false)
+  const [selectedShiftDetails, setSelectedShiftDetails] =
+    useState<ShiftFullDetails | null>(null)
+  const [shiftDetailModalOpen, setShiftDetailModalOpen] = useState(false)
+  const [isLoadingShiftDetails, setIsLoadingShiftDetails] = useState(false)
+
+  const shiftActive = !!shift
 
   const loadTransactions = async (filter: DateFilter = "today") => {
     setIsLoadingTransactions(true)
@@ -715,23 +799,72 @@ export default function POSClient({ initialShift }: POSClientProps) {
     setIsLoadingTransactions(false)
   }
 
-  const handleVoidClick = (orderId: string) => {
-    setVoidOrderId(orderId)
-  }
+  const loadCashTransactions = useCallback(async () => {
+    if (!shift) return
+    const data = await getCashTransactions(shift.id)
+    setCashTransactions(data)
+  }, [shift])
 
-  const handleCompleteClick = (orderId: string) => {
-    setCompleteOrderId(orderId)
-  }
+  const loadShiftCashSalesTotal = useCallback(async () => {
+    if (!shift) return
+    const total = await getShiftCashSalesTotal(shift.id)
+    setShiftTotalSales(total)
+  }, [shift])
+
+  const loadClosedShifts = useCallback(async () => {
+    setIsLoadingShifts(true)
+    const data = await getClosedShifts()
+    setClosedShifts(data)
+    setIsLoadingShifts(false)
+  }, [])
+
+  const handleAddCashTransaction = useCallback(async () => {
+    const amount = parseFloat(cashTxAmount)
+    if (isNaN(amount) || amount <= 0) {
+      toast.error("Please enter a valid amount")
+      return
+    }
+    if (!cashTxReason.trim()) {
+      toast.error("Please enter a reason")
+      return
+    }
+    const result = await addCashTransaction(
+      shift!.id,
+      cashTxType,
+      amount,
+      cashTxReason
+    )
+    if (result.success) {
+      toast.success(
+        `${cashTxType === "pay_in" ? "Pay in" : "Pay out"} recorded`
+      )
+      setCashTxModalOpen(false)
+      setCashTxAmount("")
+      setCashTxReason("")
+      await loadCashTransactions()
+      await loadShiftCashSalesTotal()
+    } else {
+      toast.error(result.error || "Failed to record transaction")
+    }
+  }, [
+    cashTxAmount,
+    cashTxReason,
+    cashTxType,
+    shift,
+    loadCashTransactions,
+    loadShiftCashSalesTotal,
+  ])
+
+  const handleVoidClick = (orderId: string) => setVoidOrderId(orderId)
+  const handleCompleteClick = (orderId: string) => setCompleteOrderId(orderId)
 
   const confirmVoid = async () => {
     if (!voidOrderId) return
     const result = await voidOrder(voidOrderId)
     if (result.success) {
       toast.success("Order voided")
-      // Refresh transactions
       const data = await getOrders(dateFilter)
       setTransactions(data)
-      // Also refresh sales summary if currently visible
       if (sheetView === "sales") {
         const summary = await getSalesSummary(dateFilter)
         setSalesSummary(summary)
@@ -764,111 +897,126 @@ export default function POSClient({ initialShift }: POSClientProps) {
     setSalesSummary(data)
   }
 
-  // ---- Shift actions (Server Actions) ----
-  const handleOpenShift = async (name: string) => {
+  // ---- Shift actions ----
+  const handleOpenShift = async (pin: string, startingCash: number) => {
     const formData = new FormData()
-    formData.append("cashierName", name)
+    formData.append("pin", pin)
+    formData.append("startingCash", startingCash.toString())
     const result = await openShift(formData)
     if (result.success && result.shift) {
       setShift(result.shift)
-      toast.success(`Shift opened for ${name}`)
+      toast.success(`Shift opened for ${result.shift.cashier_name}`)
     } else {
-      toast.error("Could not open shift")
+      toast.error(result.error || "Could not open shift")
     }
   }
 
   const handleCloseShiftConfirm = async () => {
     if (!shift) return
+    const cash = parseFloat(endingCash)
+    if (isNaN(cash) || cash < 0) {
+      toast.error("Please enter a valid ending cash amount")
+      return
+    }
     setIsClosingShift(true)
-    const result = await closeShift(shift.id)
+    const result = await closeShift(shift.id, cash)
     setIsClosingShift(false)
     if (result.success) {
       setShift(null)
       setCart([])
       toast.success("Shift closed")
+      setCloseShiftDialogOpen(false)
+      setEndingCash("")
     } else {
-      toast.error("Could not close shift")
+      toast.error(result.error || "Could not close shift")
     }
-    setCloseShiftDialogOpen(false)
   }
 
-  // ---- Cart logic (unchanged) ----
-  const addToCart = useCallback((product: Product, flavors: Flavor[]) => {
-    const flavorKey = [...flavors].sort().join(",")
-    const abbr = flavors
-      .map((f) => flavorOptions.find((o) => o.name === f)?.abbr)
-      .join(", ")
-    const toastId = `${product.id}-${flavorKey}-${Date.now()}`
-    const flavorText = flavors.length > 0 ? ` (${abbr})` : ""
-    setCart((prev) => {
-      const existing = prev.find(
-        (item) =>
-          item.product.id === product.id &&
-          [...item.flavors].sort().join(",") === flavorKey
-      )
-      if (existing) {
-        toast.success(`Added another ${product.name}${flavorText}`, {
-          id: toastId,
-        })
-        return prev.map((item) =>
-          item.id === existing.id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
-        )
-      }
-      toast.success(`Added ${product.name}${flavorText}`, { id: toastId })
-      return [
-        ...prev,
-        {
-          id: `${product.id}-${flavorKey}-${Date.now()}`,
-          product,
-          flavors,
-          quantity: 1,
-        },
-      ]
-    })
-  }, [])
-
-  const updateQuantity = useCallback((id: string, delta: number) => {
-    setCart((prev) => {
-      const item = prev.find((i) => i.id === id)
-      if (!item) return prev
-
-      const newQty = item.quantity + delta
-      const abbrs = item.flavors
+  // ---- Cart logic (early return if no shift) ----
+  const addToCart = useCallback(
+    (product: Product, flavors: Flavor[]) => {
+      if (!shiftActive) return
+      const flavorKey = [...flavors].sort().join(",")
+      const abbr = flavors
         .map((f) => flavorOptions.find((o) => o.name === f)?.abbr)
         .join(", ")
-      const flavorText = item.flavors.length > 0 ? ` (${abbrs})` : ""
+      const toastId = `${product.id}-${flavorKey}-${Date.now()}`
+      const flavorText = flavors.length > 0 ? ` (${abbr})` : ""
+      setCart((prev) => {
+        const existing = prev.find(
+          (item) =>
+            item.product.id === product.id &&
+            [...item.flavors].sort().join(",") === flavorKey
+        )
+        if (existing) {
+          toast.success(`Added another ${product.name}${flavorText}`, {
+            id: toastId,
+          })
+          return prev.map((item) =>
+            item.id === existing.id
+              ? { ...item, quantity: item.quantity + 1 }
+              : item
+          )
+        }
+        toast.success(`Added ${product.name}${flavorText}`, { id: toastId })
+        return [
+          ...prev,
+          {
+            id: `${product.id}-${flavorKey}-${Date.now()}`,
+            product,
+            flavors,
+            quantity: 1,
+          },
+        ]
+      })
+    },
+    [shiftActive]
+  )
 
-      if (newQty <= 0) {
+  const updateQuantity = useCallback(
+    (id: string, delta: number) => {
+      if (!shiftActive) return
+      setCart((prev) => {
+        const item = prev.find((i) => i.id === id)
+        if (!item) return prev
+        const newQty = item.quantity + delta
+        const abbrs = item.flavors
+          .map((f) => flavorOptions.find((o) => o.name === f)?.abbr)
+          .join(", ")
+        const flavorText = item.flavors.length > 0 ? ` (${abbrs})` : ""
+        if (newQty <= 0) {
+          toast.success(`Removed ${item.product.name}${flavorText}`)
+          return prev.filter((i) => i.id !== id)
+        }
+        toast.success(
+          `${delta > 0 ? "Increased" : "Decreased"} ${item.product.name}${flavorText} to ${newQty}`
+        )
+        return prev.map((i) => (i.id === id ? { ...i, quantity: newQty } : i))
+      })
+    },
+    [shiftActive]
+  )
+
+  const removeItem = useCallback(
+    (id: string) => {
+      if (!shiftActive) return
+      setCart((prev) => {
+        const item = prev.find((i) => i.id === id)
+        if (!item) return prev
+        const abbrs = item.flavors
+          .map((f) => flavorOptions.find((o) => o.name === f)?.abbr)
+          .join(", ")
+        const flavorText = item.flavors.length > 0 ? ` (${abbrs})` : ""
         toast.success(`Removed ${item.product.name}${flavorText}`)
         return prev.filter((i) => i.id !== id)
-      }
-
-      toast.success(
-        `${delta > 0 ? "Increased" : "Decreased"} ${item.product.name}${flavorText} to ${newQty}`
-      )
-      return prev.map((i) => (i.id === id ? { ...i, quantity: newQty } : i))
-    })
-  }, [])
-
-  const removeItem = useCallback((id: string) => {
-    setCart((prev) => {
-      const item = prev.find((i) => i.id === id)
-      if (!item) return prev
-
-      const abbrs = item.flavors
-        .map((f) => flavorOptions.find((o) => o.name === f)?.abbr)
-        .join(", ")
-      const flavorText = item.flavors.length > 0 ? ` (${abbrs})` : ""
-
-      toast.success(`Removed ${item.product.name}${flavorText}`)
-      return prev.filter((i) => i.id !== id)
-    })
-  }, [])
+      })
+    },
+    [shiftActive]
+  )
 
   const updateItemDiscount = useCallback(
     (id: string, discountType: DiscountType, discountPercent: number) => {
+      if (!shiftActive) return
       setCart((prev) =>
         prev.map((item) => {
           if (item.id === id) {
@@ -883,8 +1031,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
                   ? "PWD"
                   : "Custom"
             toast.success(
-              `${label} ${discountPercent}% discount applied to ${item.product.name}${flavorText}`,
-              { id: `${id}-discount-${Date.now()}` }
+              `${label} ${discountPercent}% discount applied to ${item.product.name}${flavorText}`
             )
             return { ...item, discountType, discountPercent }
           }
@@ -892,21 +1039,26 @@ export default function POSClient({ initialShift }: POSClientProps) {
         })
       )
     },
-    []
+    [shiftActive]
   )
 
-  const clearItemDiscount = useCallback((id: string) => {
-    setCart((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? { ...item, discountType: undefined, discountPercent: undefined }
-          : item
+  const clearItemDiscount = useCallback(
+    (id: string) => {
+      if (!shiftActive) return
+      setCart((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? { ...item, discountType: undefined, discountPercent: undefined }
+            : item
+        )
       )
-    )
-    toast.info("Discount removed")
-  }, [])
+      toast.info("Discount removed")
+    },
+    [shiftActive]
+  )
 
   const handleClearCart = () => {
+    if (!shiftActive) return
     if (cart.length === 0) return
     setCart([])
     toast.success("Cart cleared")
@@ -915,8 +1067,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
 
   const itemTotal = (item: CartItem) => {
     const base = item.product.price * item.quantity
-    if (!item.discountPercent) return base
-    return base * (1 - item.discountPercent / 100)
+    return item.discountPercent ? base * (1 - item.discountPercent / 100) : base
   }
 
   const subtotal = cart.reduce((sum, item) => sum + itemTotal(item), 0)
@@ -927,6 +1078,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
       : 0
 
   const handleProductClick = (product: Product) => {
+    if (!shiftActive) return
     if (!product.hasFlavors) {
       addToCart(product, [])
       return
@@ -936,17 +1088,18 @@ export default function POSClient({ initialShift }: POSClientProps) {
   }
 
   const openDiscountDialog = (itemId: string) => {
+    if (!shiftActive) return
     setDiscountItemId(itemId)
     setDiscountDialogOpen(true)
   }
 
   const removeItemDiscount = () => {
+    if (!shiftActive) return
     if (!discountItemId) return
     clearItemDiscount(discountItemId)
     setDiscountDialogOpen(false)
   }
 
-  // ---- Save order (Server Action) ----
   const saveOrderToDb = async () => {
     setIsSubmitting(true)
     if (!shift) {
@@ -992,6 +1145,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
   }
 
   const handleCheckout = () => {
+    if (!shiftActive) return
     if (cart.length === 0) return
     setCustomerName("")
     setCustomerDialogOpen(true)
@@ -1005,7 +1159,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
   const handleNewOrder = async () => {
     const saved = await saveOrderToDb()
     if (!saved) return
-
     setCart([])
     setReceiptOpen(false)
     setCustomerName("")
@@ -1014,6 +1167,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
   }
 
   const handleEditItem = (id: string) => {
+    if (!shiftActive) return
     const item = cart.find((i) => i.id === id)
     if (item) {
       setEditingCartItem({ ...item })
@@ -1036,17 +1190,30 @@ export default function POSClient({ initialShift }: POSClientProps) {
         setIsLoadingSales(true)
         const data = await getSalesSummary(dateFilter)
         setSalesSummary(data)
+        if (!shiftActive) {
+          await loadClosedShifts()
+        }
+
+        if (shift) {
+          await loadShiftCashSalesTotal()
+          await loadCashTransactions()
+        }
         setIsLoadingSales(false)
       }
       fetch()
     }
-  }, [sheetView, dateFilter, menuSheetOpen])
+  }, [
+    sheetView,
+    dateFilter,
+    menuSheetOpen,
+    shift,
+    loadShiftCashSalesTotal,
+    loadCashTransactions,
+    loadClosedShifts,
+    shiftActive,
+  ])
 
   // ---- Render ----
-  if (!shift) {
-    return <OpenShiftDialog onOpenShift={handleOpenShift} />
-  }
-
   return (
     <div className="light h-screen bg-background text-foreground">
       <Toaster position="top-center" richColors />
@@ -1068,10 +1235,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
               open={menuSheetOpen}
               onOpenChange={(open) => {
                 setMenuSheetOpen(open)
-                if (!open) {
-                  // Reset view when sheet closes
-                  setTimeout(() => setSheetView("menu"), 200)
-                }
+                if (!open) setTimeout(() => setSheetView("menu"), 200)
               }}
             >
               <SheetTrigger asChild>
@@ -1108,19 +1272,45 @@ export default function POSClient({ initialShift }: POSClientProps) {
                         <TrendingUp className="mr-3 h-5 w-5" />
                         Sales
                       </Button>
-                    </div>
-                    <div className="mt-auto border-t p-4">
                       <Button
-                        variant="destructive"
-                        className="w-full"
-                        onClick={() => {
-                          setMenuSheetOpen(false)
-                          setCloseShiftDialogOpen(true)
+                        variant="ghost"
+                        className="h-12 w-full justify-start text-base"
+                        onClick={async () => {
+                          await loadClosedShifts()
+                          setSheetView("shifts")
                         }}
                       >
-                        <LogOut className="mr-2 h-4 w-4" />
-                        Close Shift
+                        <Calendar className="mr-3 h-5 w-5" />
+                        Shift Reports
                       </Button>
+                    </div>
+
+                    <div className="mt-auto border-t p-4">
+                      {shiftActive ? (
+                        <Button
+                          variant="destructive"
+                          className="w-full"
+                          onClick={() => {
+                            setMenuSheetOpen(false)
+                            setCloseShiftDialogOpen(true)
+                          }}
+                        >
+                          <LogOut className="mr-2 h-4 w-4" />
+                          Close Shift
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          className="w-full"
+                          onClick={() => {
+                            setMenuSheetOpen(false)
+                            setOpenShiftDialogOpen(true)
+                          }}
+                        >
+                          <LogOut className="mr-2 h-4 w-4" />
+                          Open Shift
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1137,7 +1327,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                       </Button>
                       <SheetTitle>Transactions</SheetTitle>
                     </div>
-
                     <div className="flex shrink-0 gap-2 border-b p-4">
                       <Button
                         variant={dateFilter === "all" ? "default" : "outline"}
@@ -1170,7 +1359,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                         Today Only
                       </Button>
                     </div>
-
                     <div className="min-h-0 flex-1">
                       <ScrollArea className="h-full">
                         <div className="p-4">
@@ -1221,7 +1409,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                       </Button>
                       <SheetTitle>Sales Summary</SheetTitle>
                     </div>
-
                     <div className="flex shrink-0 gap-2 border-b p-4">
                       <Button
                         variant={dateFilter === "all" ? "default" : "outline"}
@@ -1254,7 +1441,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                         Today Only
                       </Button>
                     </div>
-
                     <div className="min-h-0 flex-1">
                       <ScrollArea className="h-full">
                         <div className="space-y-4 p-3 sm:p-4">
@@ -1280,18 +1466,150 @@ export default function POSClient({ initialShift }: POSClientProps) {
                             </div>
                           </div>
 
-                          {/* Average Order Value */}
-                          <div className="rounded-lg border p-3 sm:p-4">
-                            <p className="mb-1 text-xs font-medium sm:text-sm">
-                              Average Order Value
-                            </p>
-                            <p className="text-lg font-bold break-all sm:text-xl">
-                              ₱
-                              {formatPrice(
-                                salesSummary?.averageOrderValue || 0
+                          {/* Cash Drawer Section – only when shift active */}
+                          {shiftActive && (
+                            <div className="rounded-lg border p-3 sm:p-4">
+                              <p className="mb-2 text-sm font-medium">
+                                Cash Drawer
+                              </p>
+                              <div className="space-y-1 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">
+                                    Starting Cash
+                                  </span>
+                                  <span>
+                                    ₱{formatPrice(shift?.starting_cash || 0)}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">
+                                    Sales (this shift)
+                                  </span>
+                                  <span>₱{formatPrice(shiftTotalSales)}</span>
+                                </div>
+                                <div className="flex justify-between text-green-600">
+                                  <span>Pay In</span>
+                                  <span>
+                                    +₱
+                                    {formatPrice(
+                                      cashTransactions
+                                        .filter((t) => t.type === "pay_in")
+                                        .reduce((s, t) => s + t.amount, 0)
+                                    )}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between text-red-600">
+                                  <span>Pay Out</span>
+                                  <span>
+                                    -₱
+                                    {formatPrice(
+                                      cashTransactions
+                                        .filter((t) => t.type === "pay_out")
+                                        .reduce((s, t) => s + t.amount, 0)
+                                    )}
+                                  </span>
+                                </div>
+                                <Separator />
+                                <div className="flex justify-between font-semibold">
+                                  <span>Expected Cash</span>
+                                  <span>
+                                    ₱
+                                    {formatPrice(
+                                      (shift?.starting_cash || 0) +
+                                        shiftTotalSales +
+                                        cashTransactions
+                                          .filter((t) => t.type === "pay_in")
+                                          .reduce((s, t) => s + t.amount, 0) -
+                                        cashTransactions
+                                          .filter((t) => t.type === "pay_out")
+                                          .reduce((s, t) => s + t.amount, 0)
+                                    )}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-muted-foreground">
+                                    Ending Cash (entered at close)
+                                  </span>
+                                  <span>
+                                    {shift?.ending_cash !== null
+                                      ? `₱${formatPrice(shift.ending_cash)}`
+                                      : "—"}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between font-bold">
+                                  <span>Difference</span>
+                                  <span
+                                    className={
+                                      shift?.cash_difference !== null
+                                        ? shift.cash_difference >= 0
+                                          ? "text-green-600"
+                                          : "text-red-600"
+                                        : ""
+                                    }
+                                  >
+                                    {shift?.cash_difference !== null
+                                      ? `₱${formatPrice(Math.abs(shift.cash_difference))} ${shift.cash_difference >= 0 ? "(over)" : "(short)"}`
+                                      : "—"}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="mt-3 flex gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="flex-1 border-green-600 text-green-600"
+                                  onClick={() => {
+                                    setCashTxType("pay_in")
+                                    setCashTxModalOpen(true)
+                                  }}
+                                >
+                                  + Pay In
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="flex-1 border-red-600 text-red-600"
+                                  onClick={() => {
+                                    setCashTxType("pay_out")
+                                    setCashTxModalOpen(true)
+                                  }}
+                                >
+                                  - Pay Out
+                                </Button>
+                              </div>
+
+                              {cashTransactions.length > 0 && (
+                                <div className="mt-3">
+                                  <p className="mb-1 text-xs text-muted-foreground">
+                                    Recent
+                                  </p>
+                                  <div className="space-y-1">
+                                    {cashTransactions.slice(0, 3).map((tx) => (
+                                      <div
+                                        key={tx.id}
+                                        className="flex justify-between text-xs"
+                                      >
+                                        <span
+                                          className={
+                                            tx.type === "pay_in"
+                                              ? "text-green-600"
+                                              : "text-red-600"
+                                          }
+                                        >
+                                          {tx.type === "pay_in" ? "+" : "-"}₱
+                                          {formatPrice(tx.amount)}
+                                        </span>
+                                        <span className="ml-2 truncate text-muted-foreground">
+                                          {tx.reason}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
                               )}
-                            </p>
-                          </div>
+                            </div>
+                          )}
 
                           {/* Best Seller & Top Flavor */}
                           <div className="grid grid-cols-2 gap-3">
@@ -1349,6 +1667,147 @@ export default function POSClient({ initialShift }: POSClientProps) {
                                 ))}
                             </div>
                           </div>
+
+                          {!shiftActive && closedShifts.length > 0 && (
+                            <div className="rounded-lg border p-3 sm:p-4">
+                              <p className="mb-2 text-xs font-medium sm:text-sm">
+                                Recent Shifts
+                              </p>
+                              <div className="space-y-2">
+                                {closedShifts.slice(0, 5).map((s) => (
+                                  <div
+                                    key={s.id}
+                                    className="flex justify-between text-xs"
+                                  >
+                                    <span>
+                                      {new Date(
+                                        s.start_time
+                                      ).toLocaleDateString()}{" "}
+                                      – {s.cashier_name}
+                                    </span>
+                                    <span
+                                      className={
+                                        s.cash_difference !== null
+                                          ? s.cash_difference >= 0
+                                            ? "text-green-600"
+                                            : "text-red-600"
+                                          : ""
+                                      }
+                                    >
+                                      {s.cash_difference !== null
+                                        ? `${s.cash_difference >= 0 ? "+" : "-"}₱${formatPrice(Math.abs(s.cash_difference))}`
+                                        : "—"}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  </div>
+                )}
+
+                {sheetView === "shifts" && (
+                  <div className="flex h-full flex-col">
+                    <div className="flex shrink-0 items-center gap-2 border-b p-4">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setSheetView("menu")}
+                      >
+                        <ArrowLeft className="h-5 w-5" />
+                      </Button>
+                      <SheetTitle>Shift Reports</SheetTitle>
+                    </div>
+                    <div className="min-h-0 flex-1">
+                      <ScrollArea className="h-full">
+                        <div className="space-y-4 p-4">
+                          {isLoadingShifts ? (
+                            <div className="flex justify-center py-8">
+                              <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                            </div>
+                          ) : closedShifts.length === 0 ? (
+                            <div className="py-8 text-center text-muted-foreground">
+                              No closed shifts
+                            </div>
+                          ) : (
+                            closedShifts.map((s) => (
+                              <div
+                                key={s.id}
+                                className={`cursor-pointer rounded-lg border p-3 transition-colors hover:bg-muted/50 ${
+                                  isLoadingShiftDetails
+                                    ? "pointer-events-none opacity-60"
+                                    : ""
+                                }`}
+                                onClick={async () => {
+                                  if (isLoadingShiftDetails) return
+                                  setIsLoadingShiftDetails(true)
+                                  const details = await getShiftFullDetails(
+                                    s.id
+                                  )
+                                  setIsLoadingShiftDetails(false)
+                                  if (details) {
+                                    setSelectedShiftDetails(details)
+                                    setShiftDetailModalOpen(true)
+                                  } else {
+                                    toast.error("Could not load shift details")
+                                  }
+                                }}
+                              >
+                                <div className="flex justify-between font-semibold">
+                                  <span>
+                                    {new Date(
+                                      s.start_time
+                                    ).toLocaleDateString()}
+                                  </span>
+                                  <span
+                                    className={
+                                      s.cash_difference !== null
+                                        ? s.cash_difference > 0
+                                          ? "text-green-600"
+                                          : s.cash_difference < 0
+                                            ? "text-red-600"
+                                            : ""
+                                        : ""
+                                    }
+                                  >
+                                    {s.cash_difference !== null
+                                      ? `${s.cash_difference > 0 ? "Over" : s.cash_difference < 0 ? "Short" : ""} ₱${formatPrice(Math.abs(s.cash_difference))}`
+                                      : "—"}
+                                  </span>
+                                </div>
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  <div>Cashier: {s.cashier_name}</div>
+                                  <div>
+                                    Start:{" "}
+                                    {new Date(s.start_time).toLocaleString()}
+                                  </div>
+                                  <div>
+                                    End:{" "}
+                                    {s.end_time
+                                      ? new Date(s.end_time).toLocaleString()
+                                      : "—"}
+                                  </div>
+                                </div>
+                                <div className="mt-2 grid grid-cols-2 gap-1 text-xs">
+                                  <div>
+                                    Expected:{" "}
+                                    {s.expected_cash !== null
+                                      ? `₱${formatPrice(s.expected_cash)}`
+                                      : "—"}
+                                  </div>
+                                  <div>
+                                    Ending:{" "}
+                                    {s.ending_cash !== null
+                                      ? `₱${formatPrice(s.ending_cash)}`
+                                      : "—"}
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          )}
                         </div>
                       </ScrollArea>
                     </div>
@@ -1374,22 +1833,16 @@ export default function POSClient({ initialShift }: POSClientProps) {
           <ScrollArea className="flex-1">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {(() => {
-                // Filter products based on tab
                 const filtered = products.filter((p) => {
                   if (activeTab === "all") return true
                   return p.category === activeTab
                 })
-
-                // Build a flat display array of headers + products
                 type DisplayItem =
                   | { type: "header"; category: string }
                   | { type: "product"; product: Product }
-
                 const displayItems: DisplayItem[] = []
                 let lastCategory = ""
-
                 for (const product of filtered) {
-                  // Only add category header when on "all" tab and category changes
                   if (
                     activeTab === "all" &&
                     product.category !== lastCategory
@@ -1402,7 +1855,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                   }
                   displayItems.push({ type: "product", product })
                 }
-
                 return displayItems.map((item) => {
                   if (item.type === "header") {
                     return (
@@ -1416,13 +1868,11 @@ export default function POSClient({ initialShift }: POSClientProps) {
                       </React.Fragment>
                     )
                   }
-
-                  // product card
                   const product = item.product
                   return (
                     <Card
                       key={product.id}
-                      className="cursor-pointer border transition-shadow hover:shadow-md active:scale-[0.98]"
+                      className={`cursor-pointer border transition-shadow hover:shadow-md active:scale-[0.98] ${!shiftActive ? "pointer-events-none opacity-60" : ""}`}
                       onClick={() => handleProductClick(product)}
                     >
                       <CardContent className="flex flex-col items-center justify-center p-6">
@@ -1438,8 +1888,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
                           className="mt-4 w-full"
                           tabIndex={-1}
                         >
-                          <Plus className="mr-1 h-4 w-4" />
-                          Add
+                          <Plus className="mr-1 h-4 w-4" /> Add
                         </Button>
                       </CardContent>
                     </Card>
@@ -1450,17 +1899,31 @@ export default function POSClient({ initialShift }: POSClientProps) {
           </ScrollArea>
         </main>
 
-        {/* Mobile cart button */}
+        {/* Floating button */}
         <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 md:hidden">
-          <Button
-            variant="default"
-            size="lg"
-            className="gap-3 rounded-full bg-primary px-6 py-6 shadow-lg"
-            onClick={() => setCartOpen(true)}
-          >
-            <ShoppingCart className="h-5 w-5" />
-            <span>{cart.reduce((sum, i) => sum + i.quantity, 0)} item(s)</span>
-          </Button>
+          {!shiftActive ? (
+            <Button
+              variant="default"
+              size="lg"
+              className="gap-3 rounded-full bg-primary px-6 py-6 shadow-lg"
+              onClick={() => setOpenShiftDialogOpen(true)}
+            >
+              <LogOut className="h-5 w-5" />
+              Open Shift
+            </Button>
+          ) : (
+            <Button
+              variant="default"
+              size="lg"
+              className="gap-3 rounded-full bg-primary px-6 py-6 shadow-lg"
+              onClick={() => setCartOpen(true)}
+            >
+              <ShoppingCart className="h-5 w-5" />
+              <span>
+                {cart.reduce((sum, i) => sum + i.quantity, 0)} item(s)
+              </span>
+            </Button>
+          )}
         </div>
 
         {/* Desktop cart aside */}
@@ -1476,6 +1939,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
             handleCheckout={handleCheckout}
             onEditItem={handleEditItem}
             onClearCart={handleClearCart}
+            shiftActive={shiftActive}
           />
         </aside>
 
@@ -1500,10 +1964,18 @@ export default function POSClient({ initialShift }: POSClientProps) {
                 handleCheckout={handleCheckout}
                 onEditItem={handleEditItem}
                 onClearCart={handleClearCart}
+                shiftActive={shiftActive}
               />
             </div>
           </DrawerContent>
         </Drawer>
+
+        {/* All remaining dialogs */}
+        <OpenShiftDialog
+          open={openShiftDialogOpen}
+          onOpenShift={handleOpenShift}
+          onClose={() => setOpenShiftDialogOpen(false)}
+        />
 
         {/* Flavor Selection Modal */}
         <Dialog
@@ -1533,15 +2005,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
                   <Button
                     key={f.name}
                     variant="outline"
-                    className={`h-12 justify-start gap-2 ${
-                      isSelected && "ring-2 ring-primary ring-offset-1"
-                    } ${isSelected ? f.selectedBgClass : f.bgClass} ${
-                      f.borderClass
-                    } ${f.hoverClass} ${
-                      isDisabled
-                        ? "cursor-not-allowed opacity-50 grayscale"
-                        : ""
-                    }`}
+                    className={`h-12 justify-start gap-2 ${isSelected && "ring-2 ring-primary ring-offset-1"} ${isSelected ? f.selectedBgClass : f.bgClass} ${f.borderClass} ${f.hoverClass} ${isDisabled ? "cursor-not-allowed opacity-50 grayscale" : ""}`}
                     disabled={isDisabled}
                     onClick={() => {
                       setSelectedFlavors((prev) =>
@@ -1612,15 +2076,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
                         <Button
                           key={f.name}
                           variant="outline"
-                          className={`h-12 justify-start gap-2 ${
-                            isSelected && "ring-2 ring-primary ring-offset-1"
-                          } ${isSelected ? f.selectedBgClass : f.bgClass} ${
-                            f.borderClass
-                          } ${f.hoverClass} ${
-                            isDisabled
-                              ? "cursor-not-allowed opacity-50 grayscale"
-                              : ""
-                          }`}
+                          className={`h-12 justify-start gap-2 ${isSelected && "ring-2 ring-primary ring-offset-1"} ${isSelected ? f.selectedBgClass : f.bgClass} ${f.borderClass} ${f.hoverClass} ${isDisabled ? "cursor-not-allowed opacity-50 grayscale" : ""}`}
                           disabled={isDisabled}
                           onClick={() => {
                             setEditingCartItem((prev) => {
@@ -1641,7 +2097,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                     })}
                   </div>
                 </div>
-
                 <div>
                   <p className="mb-2 text-sm font-medium">Quantity</p>
                   <div className="flex items-center gap-3">
@@ -1680,7 +2135,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                     </Button>
                   </div>
                 </div>
-
                 <Button
                   variant="default"
                   size="lg"
@@ -1769,8 +2223,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                   </Button>
                 ))}
               </div>
-
-              {/* Cash payment input - only show when Cash is selected */}
               {paymentMethod === "Cash" && (
                 <div className="space-y-2">
                   <div>
@@ -1805,7 +2257,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                     )}
                 </div>
               )}
-
               <Button
                 className="mt-2 w-full"
                 disabled={
@@ -1845,8 +2296,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                   )
                 </p>
               )}
-
-              {/* Custom Discount */}
               <div>
                 <p className="mb-2 text-sm font-medium">Custom Discount</p>
                 <div className="flex gap-3">
@@ -1856,27 +2305,15 @@ export default function POSClient({ initialShift }: POSClientProps) {
                       discountItem?.discountPercent === percent &&
                       discountItem?.discountType === "custom"
                     const isPending = pendingDiscountKey === key
-                    const isPendingChange = isPending && !isCurrent
-                    const isPendingCurrent = isPending && isCurrent
-
                     return (
                       <Button
                         key={percent}
                         variant="outline"
                         size="lg"
-                        className={`flex-1 ${
-                          isCurrent && !isPending
-                            ? "border-blue-300 bg-blue-100 text-blue-800"
-                            : isPendingChange
-                              ? "border-amber-300 bg-amber-100 text-amber-800"
-                              : isPendingCurrent
-                                ? "border-blue-300 bg-blue-100 text-blue-800"
-                                : ""
-                        } ${isCurrent && isPendingChange ? "opacity-50" : ""}`}
-                        onClick={() => {
-                          if (isPendingCurrent) setPendingDiscountKey(null)
-                          else setPendingDiscountKey(key)
-                        }}
+                        className={`flex-1 ${isCurrent && !isPending ? "border-blue-300 bg-blue-100 text-blue-800" : isPending ? "border-amber-300 bg-amber-100 text-amber-800" : ""}`}
+                        onClick={() =>
+                          setPendingDiscountKey(isPending ? null : key)
+                        }
                       >
                         {percent}%
                       </Button>
@@ -1884,37 +2321,21 @@ export default function POSClient({ initialShift }: POSClientProps) {
                   })}
                 </div>
               </div>
-
-              {/* Senior / PWD */}
               <div>
                 <p className="mb-2 text-sm font-medium">Senior / PWD (20%)</p>
                 <div className="flex gap-3">
                   {(["senior", "pwd"] as const).map((label) => {
                     const isCurrent = discountItem?.discountType === label
                     const isPending = pendingDiscountKey === label
-                    const isPendingChange = isPending && !isCurrent
-                    const isPendingCurrent = isPending && isCurrent
-
                     return (
                       <Button
                         key={label}
                         variant="outline"
                         size="lg"
-                        className={`flex-1 capitalize ${
-                          label === "pwd" ? "uppercase" : ""
-                        } ${
-                          isCurrent && !isPending
-                            ? "border-blue-300 bg-blue-100 text-blue-800"
-                            : isPendingChange
-                              ? "border-amber-300 bg-amber-100 text-amber-800"
-                              : isPendingCurrent
-                                ? "border-blue-300 bg-blue-100 text-blue-800"
-                                : ""
-                        }`}
-                        onClick={() => {
-                          if (isPendingCurrent) setPendingDiscountKey(null)
-                          else setPendingDiscountKey(label)
-                        }}
+                        className={`flex-1 capitalize ${label === "pwd" ? "uppercase" : ""} ${isCurrent && !isPending ? "border-blue-300 bg-blue-100 text-blue-800" : isPending ? "border-amber-300 bg-amber-100 text-amber-800" : ""}`}
+                        onClick={() =>
+                          setPendingDiscountKey(isPending ? null : label)
+                        }
                       >
                         {label}
                       </Button>
@@ -1922,11 +2343,9 @@ export default function POSClient({ initialShift }: POSClientProps) {
                   })}
                 </div>
               </div>
-
-              {/* Action button */}
               {(() => {
                 if (!pendingDiscountKey) {
-                  if (discountItem?.discountPercent != null) {
+                  if (discountItem?.discountPercent != null)
                     return (
                       <Button
                         variant="default"
@@ -1937,10 +2356,8 @@ export default function POSClient({ initialShift }: POSClientProps) {
                         Remove Discount
                       </Button>
                     )
-                  }
                   return null
                 }
-
                 const isSeniorPwdPending =
                   pendingDiscountKey === "senior" ||
                   pendingDiscountKey === "pwd"
@@ -1950,12 +2367,10 @@ export default function POSClient({ initialShift }: POSClientProps) {
                 const pendingPercent = isSeniorPwdPending
                   ? 20
                   : parseInt(pendingDiscountKey.split("-")[1])
-
                 const isCurrentSame =
                   discountItem?.discountPercent === pendingPercent &&
                   discountItem?.discountType === pendingType
-
-                if (isCurrentSame) {
+                if (isCurrentSame)
                   return (
                     <Button
                       variant="default"
@@ -1966,23 +2381,19 @@ export default function POSClient({ initialShift }: POSClientProps) {
                       Remove Discount
                     </Button>
                   )
-                }
-
                 const labelText = isSeniorPwdPending
                   ? pendingDiscountKey === "pwd"
                     ? "PWD"
                     : pendingDiscountKey.charAt(0).toUpperCase() +
                       pendingDiscountKey.slice(1)
                   : pendingPercent + "%"
-
-                if (discountItem?.discountPercent != null) {
-                  return (
-                    <Button
-                      variant="default"
-                      size="lg"
-                      className="w-full"
-                      onClick={() => {
-                        if (!discountItemId) return
+                return (
+                  <Button
+                    variant="default"
+                    size="lg"
+                    className="w-full"
+                    onClick={() => {
+                      if (discountItemId) {
                         updateItemDiscount(
                           discountItemId,
                           pendingType,
@@ -1990,30 +2401,12 @@ export default function POSClient({ initialShift }: POSClientProps) {
                         )
                         setPendingDiscountKey(null)
                         setDiscountDialogOpen(false)
-                      }}
-                    >
-                      Change to {labelText} Discount
-                    </Button>
-                  )
-                }
-
-                return (
-                  <Button
-                    variant="default"
-                    size="lg"
-                    className="w-full"
-                    onClick={() => {
-                      if (!discountItemId) return
-                      updateItemDiscount(
-                        discountItemId,
-                        pendingType,
-                        pendingPercent
-                      )
-                      setPendingDiscountKey(null)
-                      setDiscountDialogOpen(false)
+                      }
                     }}
                   >
-                    Apply {labelText} Discount
+                    {discountItem?.discountPercent != null
+                      ? `Change to ${labelText} Discount`
+                      : `Apply ${labelText} Discount`}
                   </Button>
                 )
               })()}
@@ -2027,11 +2420,10 @@ export default function POSClient({ initialShift }: POSClientProps) {
             <DialogHeader>
               <DialogTitle>Order Receipt</DialogTitle>
               <div className="mt-1 space-y-1 text-xs text-muted-foreground">
-                <p>Cashier: {shift.cashier_name}</p>
+                <p>Cashier: {shift?.cashier_name}</p>
                 {customerName && <p>Customer: {customerName}</p>}
               </div>
             </DialogHeader>
-
             <ScrollArea className="max-h-80">
               <div className="space-y-2 py-2">
                 {cart.map((item) => (
@@ -2046,12 +2438,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
                       <p className="truncate text-sm font-medium">
                         {item.product.name}
                         {item.flavors.length > 0 &&
-                          ` (${item.flavors
-                            .map(
-                              (f) =>
-                                flavorOptions.find((o) => o.name === f)?.abbr
-                            )
-                            .join(", ")})`}
+                          ` (${item.flavors.map((f) => flavorOptions.find((o) => o.name === f)?.abbr).join(", ")})`}
                       </p>
                       <div className="text-xs">
                         {item.discountPercent ? (
@@ -2079,20 +2466,14 @@ export default function POSClient({ initialShift }: POSClientProps) {
                 ))}
               </div>
             </ScrollArea>
-
             <Separator />
-
-            {/* Totals section */}
             <div className="space-y-1 pt-2 text-sm">
               <div className="flex justify-between">
                 <span>Subtotal</span>
                 <span>
                   ₱
                   {formatPrice(
-                    cart.reduce(
-                      (sum, i) => sum + i.product.price * i.quantity,
-                      0
-                    )
+                    cart.reduce((s, i) => s + i.product.price * i.quantity, 0)
                   )}
                 </span>
               </div>
@@ -2101,10 +2482,8 @@ export default function POSClient({ initialShift }: POSClientProps) {
                 <span className="text-red-500">
                   -₱
                   {formatPrice(
-                    cart.reduce(
-                      (sum, i) => sum + i.product.price * i.quantity,
-                      0
-                    ) - subtotal
+                    cart.reduce((s, i) => s + i.product.price * i.quantity, 0) -
+                      subtotal
                   )}
                 </span>
               </div>
@@ -2113,8 +2492,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                 <span>₱{formatPrice(subtotal)}</span>
               </div>
             </div>
-
-            {/* Payment details - only shown after total */}
             <div className="mt-2 space-y-1 border-t pt-2 text-xs text-muted-foreground">
               <div className="flex justify-between">
                 <span>Payment:</span>
@@ -2137,24 +2514,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                 </>
               )}
             </div>
-
-            {/* <div className="mt-4 flex gap-2">
-              <Button
-                variant="outline"
-                onClick={handlePrintReceipt}
-                className="flex-1"
-              >
-                <Printer className="mr-2 h-4 w-4" /> Print
-              </Button>
-              <Button
-                onClick={handleNewOrder}
-                disabled={isSubmitting}
-                className="flex-1"
-              >
-                Mark Order as Complete
-              </Button>
-            </div> */}
-
             <Button
               className="mt-4 w-full"
               onClick={async () => {
@@ -2197,10 +2556,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
                 </div>
               </div>
             </DialogHeader>
-
             <Separator />
-
-            {/* Order items – with quantity badge, no "x" */}
             <div className="space-y-3 pt-2">
               {selectedOrder?.items.map((item, idx) => (
                 <div
@@ -2208,8 +2564,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
                   className="flex items-center justify-between gap-2"
                 >
                   <div className="flex flex-1 items-center gap-2">
-                    {/* Quantity badge */}
-                    <span className="inline-flex min-w-9 items-center justify-center rounded-md bg-primary px-2 py-1 text-sm font-extrabold text-white tabular-nums">
+                    <span className="inline-flex min-w-9 items-center justify-center rounded-md bg-primary px-2 py-1 text-sm font-extrabold text-white">
                       {item.quantity}
                     </span>
                     <div className="flex-1">
@@ -2231,7 +2586,6 @@ export default function POSClient({ initialShift }: POSClientProps) {
                 </div>
               ))}
             </div>
-
             <Separator />
             <div className="flex justify-between text-base font-bold">
               <span>Total</span>
@@ -2240,7 +2594,206 @@ export default function POSClient({ initialShift }: POSClientProps) {
           </DialogContent>
         </Dialog>
 
-        {/* Void Confirmation Dialog */}
+        <Dialog open={cashTxModalOpen} onOpenChange={setCashTxModalOpen}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>
+                {cashTxType === "pay_in" ? "Pay In" : "Pay Out"}
+              </DialogTitle>
+              <DialogDescription>
+                Enter amount and reason for this cash movement.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              <div>
+                <label className="text-sm font-medium">Amount (₱)</label>
+                <Input
+                  type="number"
+                  placeholder="0.00"
+                  value={cashTxAmount}
+                  onChange={(e) => setCashTxAmount(e.target.value)}
+                  min="0.01"
+                  step="0.01"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Reason</label>
+                <Input
+                  placeholder="e.g., Customer refund, Manager loan..."
+                  value={cashTxReason}
+                  onChange={(e) => setCashTxReason(e.target.value)}
+                />
+              </div>
+              <Button onClick={handleAddCashTransaction} className="w-full">
+                Confirm {cashTxType === "pay_in" ? "Pay In" : "Pay Out"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={shiftDetailModalOpen}
+          onOpenChange={setShiftDetailModalOpen}
+        >
+          <DialogContent className="max-h-[80vh] max-w-sm overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Shift Details</DialogTitle>
+              {selectedShiftDetails && (
+                <div className="text-sm text-muted-foreground">
+                  <p>Cashier: {selectedShiftDetails.shift.cashier_name}</p>
+                  <p>
+                    Started:{" "}
+                    {new Date(
+                      selectedShiftDetails.shift.start_time
+                    ).toLocaleString()}
+                  </p>
+                  <p>
+                    Ended:{" "}
+                    {selectedShiftDetails.shift.end_time
+                      ? new Date(
+                          selectedShiftDetails.shift.end_time
+                        ).toLocaleString()
+                      : "—"}
+                  </p>
+                </div>
+              )}
+            </DialogHeader>
+
+            {selectedShiftDetails && (
+              <div className="space-y-4">
+                {/* Starting & Sales */}
+                <div className="space-y-2 rounded-lg border p-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Starting Cash</span>
+                    <span className="font-medium">
+                      ₱
+                      {formatPrice(
+                        selectedShiftDetails.shift.starting_cash || 0
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">
+                      Total Sales (Cash)
+                    </span>
+                    <span className="font-medium">
+                      ₱{formatPrice(selectedShiftDetails.totalCashSales || 0)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Pay Ins */}
+
+                <div className="space-y-2 rounded-lg border p-3">
+                  <p className="text-sm font-medium text-green-600">
+                    Pay Ins (Deposits)
+                  </p>
+                  <div className="space-y-1">
+                    {selectedShiftDetails.payIns.map((tx, idx) => (
+                      <div key={idx} className="flex justify-between text-xs">
+                        <span>{tx.reason}</span>
+                        <span className="text-green-600">
+                          +₱{formatPrice(tx.amount)}
+                        </span>
+                      </div>
+                    ))}
+                    <Separator />
+                    <div className="flex justify-between text-sm font-semibold">
+                      <span>Total Pay Ins</span>
+                      <span className="text-green-600">
+                        +₱
+                        {formatPrice(
+                          selectedShiftDetails.payIns.reduce(
+                            (s, t) => s + t.amount,
+                            0
+                          )
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pay Outs */}
+
+                <div className="space-y-2 rounded-lg border p-3">
+                  <p className="text-sm font-medium text-red-600">
+                    Pay Outs (Withdrawals)
+                  </p>
+                  <div className="space-y-1">
+                    {selectedShiftDetails.payOuts.map((tx, idx) => (
+                      <div key={idx} className="flex justify-between text-xs">
+                        <span>{tx.reason}</span>
+                        <span className="text-red-600">
+                          -₱{formatPrice(tx.amount)}
+                        </span>
+                      </div>
+                    ))}
+                    <Separator />
+                    <div className="flex justify-between text-sm font-semibold">
+                      <span>Total Pay Outs</span>
+                      <span className="text-red-600">
+                        -₱
+                        {formatPrice(
+                          selectedShiftDetails.payOuts.reduce(
+                            (s, t) => s + t.amount,
+                            0
+                          )
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Expected, Ending, Difference */}
+                <div className="space-y-2 rounded-lg border p-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Expected Cash</span>
+                    <span className="font-medium">
+                      ₱
+                      {formatPrice(
+                        selectedShiftDetails.shift.expected_cash ?? 0
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">
+                      Ending Cash (entered)
+                    </span>
+                    <span className="font-medium">
+                      {selectedShiftDetails.shift.ending_cash !== null &&
+                      selectedShiftDetails.shift.ending_cash !== undefined
+                        ? `₱${formatPrice(selectedShiftDetails.shift.ending_cash)}`
+                        : "—"}
+                    </span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between text-sm font-bold">
+                    <span>Difference</span>
+                    <span
+                      className={
+                        selectedShiftDetails.shift.cash_difference !== null &&
+                        selectedShiftDetails.shift.cash_difference !== undefined
+                          ? selectedShiftDetails.shift.cash_difference > 0
+                            ? "text-green-600"
+                            : selectedShiftDetails.shift.cash_difference < 0
+                              ? "text-red-600"
+                              : ""
+                          : ""
+                      }
+                    >
+                      {selectedShiftDetails.shift.cash_difference !== null &&
+                      selectedShiftDetails.shift.cash_difference !== undefined
+                        ? `${selectedShiftDetails.shift.cash_difference > 0 ? "Over" : selectedShiftDetails.shift.cash_difference < 0 ? "Short" : ""} ₱${formatPrice(Math.abs(selectedShiftDetails.shift.cash_difference))}`
+                        : "—"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Void Confirmation */}
         <AlertDialog
           open={!!voidOrderId}
           onOpenChange={(open) => !open && setVoidOrderId(null)}
@@ -2265,7 +2818,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
           </AlertDialogContent>
         </AlertDialog>
 
-        {/* Complete Confirmation Dialog */}
+        {/* Complete Confirmation */}
         <AlertDialog
           open={!!completeOrderId}
           onOpenChange={(open) => !open && setCompleteOrderId(null)}
@@ -2292,23 +2845,39 @@ export default function POSClient({ initialShift }: POSClientProps) {
 
         <AlertDialog
           open={closeShiftDialogOpen}
-          onOpenChange={setCloseShiftDialogOpen}
+          onOpenChange={(open) => {
+            setCloseShiftDialogOpen(open)
+            if (!open) setEndingCash("")
+          }}
         >
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Close Shift</AlertDialogTitle>
               <AlertDialogDescription>
-                Are you sure you want to close the current shift? You will need
-                to open a new shift to continue taking orders.
+                Enter the ending cash amount in the drawer to close the shift.
               </AlertDialogDescription>
             </AlertDialogHeader>
+            <div className="py-2">
+              <label className="text-sm font-medium">Ending Cash (₱)</label>
+              <Input
+                type="number"
+                placeholder="0.00"
+                value={endingCash}
+                onChange={(e) => setEndingCash(e.target.value)}
+                min="0"
+                step="0.01"
+                className="mt-1"
+              />
+            </div>
             <AlertDialogFooter>
               <AlertDialogCancel disabled={isClosingShift}>
                 Cancel
               </AlertDialogCancel>
               <AlertDialogAction
                 onClick={handleCloseShiftConfirm}
-                disabled={isClosingShift}
+                disabled={
+                  isClosingShift || !endingCash || parseFloat(endingCash) < 0
+                }
               >
                 Yes, Close Shift
               </AlertDialogAction>

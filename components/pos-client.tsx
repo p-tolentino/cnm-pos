@@ -31,11 +31,14 @@ import {
 } from "@/components/ui/dialog"
 import {
   ArrowLeft,
+  CheckCircle,
   CreditCard,
   DollarSign,
   Menu,
+  Printer,
   ReceiptIcon,
   TrendingUp,
+  XCircle,
 } from "lucide-react"
 import {
   Sheet,
@@ -57,17 +60,21 @@ import {
 import { toast, Toaster } from "sonner"
 import { Input } from "@/components/ui/input"
 import Image from "next/image"
+import { useSwipeable } from "react-swipeable"
 
 import { openShift, closeShift, type Shift } from "@/actions/shifts"
 import {
+  completeOrder,
   createOrderWithItems,
   DateFilter,
   getOrders,
   getSalesSummary,
+  voidOrder,
   type OrderInput,
   type OrderItemInput,
   type OrderWithItems,
 } from "@/actions/orders"
+import { getQueue } from "@/lib/offlineQueue"
 
 // ----------------------------------------------------------------------
 // Types & Constants
@@ -500,6 +507,149 @@ function OpenShiftDialog({ onOpenShift }: OpenShiftDialogProps) {
   )
 }
 
+interface TransactionCardProps {
+  order: OrderWithItems
+  onComplete: () => void
+  onVoid: () => void
+  onViewDetail: (order: OrderWithItems) => void
+  formatPrice: (amount: number) => string
+}
+
+const TransactionCard = ({
+  order,
+  onComplete,
+  onVoid,
+  onViewDetail,
+  formatPrice,
+}: TransactionCardProps) => {
+  const [isRevealed, setIsRevealed] = useState(false)
+
+  const isPending = order.status === "pending"
+  const isActive = isPending
+
+  const handlers = useSwipeable({
+    onSwipedLeft: () => isActive && setIsRevealed(true),
+    onSwipedRight: () => isActive && setIsRevealed(false),
+    trackMouse: true,
+    preventScrollOnSwipe: true,
+    delta: 30,
+  })
+
+  const swipeDistance = "160px"
+
+  const getHighlightColor = (items: OrderWithItems["items"]): string => {
+    let priority: "senior" | "pwd" | "custom" | null = null
+    for (const item of items) {
+      if (item.discount_type === "senior") return "orange"
+      if (item.discount_type === "pwd") priority = "pwd"
+      if (item.discount_type === "custom" && !priority) priority = "custom"
+    }
+    if (priority === "pwd") return "blue"
+    if (priority === "custom") return "yellow"
+    return ""
+  }
+
+  const highlight = getHighlightColor(order.items)
+
+  const highlightMap: Record<string, string> = {
+    orange: "border-l-4 border-l-orange-500",
+    blue: "border-l-4 border-l-blue-500",
+    yellow: "border-l-4 border-l-yellow-500",
+  }
+  const highlightClass = highlightMap[highlight] || "bg-background"
+
+  const mutedClass = !isPending ? "opacity-60 grayscale-[0.2]" : ""
+
+  return (
+    <div
+      className={`relative overflow-hidden rounded-lg border ${highlightClass} ${mutedClass}`}
+    >
+      <div
+        {...(isActive ? handlers : {})}
+        className={`relative z-10 cursor-pointer bg-background p-3 transition-transform duration-200`}
+        style={{
+          transform:
+            isActive && isRevealed
+              ? `translateX(-${swipeDistance})`
+              : "translateX(0)",
+        }}
+        onClick={() => {
+          if (!isRevealed) {
+            onViewDetail(order)
+          }
+        }}
+      >
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="font-semibold">#{order.order_number}</p>
+            <p className="text-xs text-muted-foreground">
+              {new Date(order.created_at).toLocaleString()}
+            </p>
+          </div>
+          <p className="font-bold">₱{formatPrice(order.total)}</p>
+        </div>
+        <div className="mt-2 space-y-0.5 text-sm">
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Cashier</span>
+            <span>{order.cashier_name}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Customer</span>
+            <span>{order.customer_name}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Payment</span>
+            <span>{order.payment_method}</span>
+          </div>
+        </div>
+        <div className="mt-2 flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">
+            {order.items.length} item(s)
+          </span>
+          {order.status === "completed" && (
+            <span className="flex items-center gap-1 text-green-600">
+              <CheckCircle className="h-3.5 w-3.5" />
+              <span>Completed</span>
+            </span>
+          )}
+          {order.status === "voided" && (
+            <span className="flex items-center gap-1 text-red-700">
+              <XCircle className="h-3.5 w-3.5" />
+              <span>Voided</span>
+            </span>
+          )}
+        </div>
+      </div>
+
+      {isPending && (
+        <div className="absolute top-0 right-0 bottom-0 flex">
+          <Button
+            variant="destructive"
+            className="h-full w-20 flex-col gap-1 rounded-none rounded-r-none px-2"
+            onClick={() => {
+              setIsRevealed(false)
+              onVoid()
+            }}
+          >
+            <XCircle className="h-6 w-6" />
+            <span className="text-xs">Void</span>
+          </Button>
+          <Button
+            className="h-full w-20 flex-col gap-1 rounded-none bg-green-600 px-2 hover:bg-green-700"
+            onClick={() => {
+              setIsRevealed(false)
+              onComplete()
+            }}
+          >
+            <CheckCircle className="h-6 w-6" />
+            <span className="text-xs">Complete</span>
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ----------------------------------------------------------------------
 // Main Client Component
 // ----------------------------------------------------------------------
@@ -536,6 +686,8 @@ export default function POSClient({ initialShift }: POSClientProps) {
     "menu"
   )
   const [transactions, setTransactions] = useState<OrderWithItems[]>([])
+  const [voidOrderId, setVoidOrderId] = useState<string | null>(null)
+  const [completeOrderId, setCompleteOrderId] = useState<string | null>(null)
   const [salesSummary, setSalesSummary] = useState<{
     totalSales: number
     orderCount: number
@@ -563,6 +715,50 @@ export default function POSClient({ initialShift }: POSClientProps) {
     const data = await getOrders(filter)
     setTransactions(data)
     setIsLoadingTransactions(false)
+  }
+
+  const handleVoidClick = (orderId: string) => {
+    setVoidOrderId(orderId)
+  }
+
+  const handleCompleteClick = (orderId: string) => {
+    setCompleteOrderId(orderId)
+  }
+
+  const confirmVoid = async () => {
+    if (!voidOrderId) return
+    const result = await voidOrder(voidOrderId)
+    if (result.success) {
+      toast.success("Order voided")
+      // Refresh transactions
+      const data = await getOrders(dateFilter)
+      setTransactions(data)
+      // Also refresh sales summary if currently visible
+      if (sheetView === "sales") {
+        const summary = await getSalesSummary(dateFilter)
+        setSalesSummary(summary)
+      }
+    } else {
+      toast.error("Failed to void order")
+    }
+    setVoidOrderId(null)
+  }
+
+  const confirmComplete = async () => {
+    if (!completeOrderId) return
+    const result = await completeOrder(completeOrderId)
+    if (result.success) {
+      toast.success("Order marked as completed")
+      const data = await getOrders(dateFilter)
+      setTransactions(data)
+      if (sheetView === "sales") {
+        const summary = await getSalesSummary(dateFilter)
+        setSalesSummary(summary)
+      }
+    } else {
+      toast.error("Failed to complete order")
+    }
+    setCompleteOrderId(null)
   }
 
   const loadSalesSummary = async () => {
@@ -750,6 +946,37 @@ export default function POSClient({ initialShift }: POSClientProps) {
     if (!discountItemId) return
     clearItemDiscount(discountItemId)
     setDiscountDialogOpen(false)
+  }
+
+  const handlePrintReceipt = () => {
+    const printContent = document.getElementById("receipt-content")
+    if (!printContent) return
+
+    const originalTitle = document.title
+    document.title = `Receipt_${new Date().toLocaleString()}`
+
+    const printWindow = window.open("", "_blank")
+    if (printWindow) {
+      printWindow.document.write(`
+      <html>
+        <head>
+          <title>Order Receipt</title>
+          <style>
+            body { font-family: monospace; width: 300px; margin: 0 auto; padding: 20px; }
+            .receipt-header { text-align: center; margin-bottom: 20px; }
+            .item { display: flex; justify-content: space-between; margin: 4px 0; }
+            .total { font-weight: bold; margin-top: 10px; }
+            hr { margin: 10px 0; }
+          </style>
+        </head>
+        <body>${printContent.innerHTML}</body>
+      </html>
+    `)
+      printWindow.document.close()
+      printWindow.print()
+      printWindow.close()
+    }
+    document.title = originalTitle
   }
 
   // ---- Save order (Server Action) ----
@@ -993,38 +1220,19 @@ export default function POSClient({ initialShift }: POSClientProps) {
                           ) : (
                             <div className="space-y-4">
                               {transactions.map((order) => (
-                                <div
+                                <TransactionCard
                                   key={order.id}
-                                  className="cursor-pointer space-y-2 rounded-lg border p-3 transition-colors hover:bg-muted/50"
-                                  onClick={() => {
+                                  order={order}
+                                  onComplete={() =>
+                                    handleCompleteClick(order.id)
+                                  }
+                                  onVoid={() => handleVoidClick(order.id)}
+                                  onViewDetail={(order) => {
                                     setSelectedOrder(order)
                                     setOrderDetailOpen(true)
                                   }}
-                                >
-                                  <div className="flex items-start justify-between">
-                                    <div>
-                                      <p className="font-semibold">
-                                        #{order.order_number}
-                                      </p>
-                                      <p className="text-xs text-muted-foreground">
-                                        {new Date(
-                                          order.created_at
-                                        ).toLocaleString()}
-                                      </p>
-                                    </div>
-                                    <p className="font-bold">
-                                      ₱{formatPrice(order.total)}
-                                    </p>
-                                  </div>
-                                  <div className="space-y-0.5 text-sm">
-                                    <p>Cashier: {order.cashier_name}</p>
-                                    <p>Customer: {order.customer_name}</p>
-                                    <p>Payment: {order.payment_method}</p>
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {order.items.length} item(s)
-                                  </div>
-                                </div>
+                                  formatPrice={formatPrice}
+                                />
                               ))}
                             </div>
                           )}
@@ -1051,7 +1259,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
                       <Button
                         variant={dateFilter === "all" ? "default" : "outline"}
                         size="sm"
-                        className="flex-1"
+                        className="flex-1 text-xs sm:text-sm"
                         disabled={isLoadingSales}
                         onClick={async () => {
                           setDateFilter("all")
@@ -1066,7 +1274,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
                       <Button
                         variant={dateFilter === "today" ? "default" : "outline"}
                         size="sm"
-                        className="flex-1"
+                        className="flex-1 text-xs sm:text-sm"
                         disabled={isLoadingSales}
                         onClick={async () => {
                           setDateFilter("today")
@@ -1082,34 +1290,35 @@ export default function POSClient({ initialShift }: POSClientProps) {
 
                     <div className="min-h-0 flex-1">
                       <ScrollArea className="h-full">
-                        <div className="space-y-5 p-4">
-                          {/* Existing cards */}
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="rounded-lg bg-primary/10 p-4 text-center">
-                              <DollarSign className="mx-auto mb-2 h-6 w-6 text-primary" />
-                              <p className="text-2xl font-bold">
+                        <div className="space-y-4 p-3 sm:p-4">
+                          {/* Total Sales & Orders */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="rounded-lg bg-primary/10 p-3 text-center sm:p-4">
+                              <DollarSign className="mx-auto mb-1 h-5 w-5 text-primary sm:h-6 sm:w-6" />
+                              <p className="text-base font-bold break-all sm:text-xl">
                                 ₱{formatPrice(salesSummary?.totalSales || 0)}
                               </p>
-                              <p className="text-xs text-muted-foreground">
+                              <p className="text-[11px] text-muted-foreground sm:text-xs">
                                 Total Sales
                               </p>
                             </div>
-                            <div className="rounded-lg bg-secondary/10 p-4 text-center">
-                              <ReceiptIcon className="mx-auto mb-2 h-6 w-6" />
-                              <p className="text-2xl font-bold">
+                            <div className="rounded-lg bg-secondary/10 p-3 text-center sm:p-4">
+                              <ReceiptIcon className="mx-auto mb-1 h-5 w-5 sm:h-6 sm:w-6" />
+                              <p className="text-base font-bold break-all sm:text-xl">
                                 {salesSummary?.orderCount || 0}
                               </p>
-                              <p className="text-xs text-muted-foreground">
+                              <p className="text-[11px] text-muted-foreground sm:text-xs">
                                 Orders
                               </p>
                             </div>
                           </div>
 
-                          <div className="rounded-lg border p-4">
-                            <p className="mb-2 text-sm font-medium">
+                          {/* Average Order Value */}
+                          <div className="rounded-lg border p-3 sm:p-4">
+                            <p className="mb-1 text-xs font-medium sm:text-sm">
                               Average Order Value
                             </p>
-                            <p className="text-xl font-bold">
+                            <p className="text-lg font-bold break-all sm:text-xl">
                               ₱
                               {formatPrice(
                                 salesSummary?.averageOrderValue || 0
@@ -1117,44 +1326,45 @@ export default function POSClient({ initialShift }: POSClientProps) {
                             </p>
                           </div>
 
-                          {/* New: Best Seller & Top Flavor */}
-                          <div className="grid grid-cols-2 gap-4">
-                            <div className="rounded-lg border p-4 text-center">
-                              <p className="mb-1 text-xs text-muted-foreground">
+                          {/* Best Seller & Top Flavor */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="rounded-lg border p-2 text-center sm:p-3">
+                              <p className="text-[10px] text-muted-foreground sm:text-xs">
                                 Best Seller
                               </p>
-                              <p className="text-base font-bold">
+                              <p className="text-xs leading-tight font-bold wrap-break-word sm:text-sm">
                                 {salesSummary?.bestSellerProduct || "—"}
                               </p>
                             </div>
-                            <div className="rounded-lg border p-4 text-center">
-                              <p className="mb-1 text-xs text-muted-foreground">
+                            <div className="rounded-lg border p-2 text-center sm:p-3">
+                              <p className="text-[10px] text-muted-foreground sm:text-xs">
                                 Top Flavor
                               </p>
-                              <p className="text-base font-bold">
+                              <p className="text-xs leading-tight font-bold wrap-break-word sm:text-sm">
                                 {salesSummary?.mostPopularFlavor || "—"}
                               </p>
                             </div>
                           </div>
 
-                          <div className="rounded-lg border p-4">
-                            <p className="mb-2 text-sm font-medium">
+                          {/* Payment Methods */}
+                          <div className="rounded-lg border p-3 sm:p-4">
+                            <p className="mb-2 text-xs font-medium sm:text-sm">
                               Payment Methods
                             </p>
-                            <div className="space-y-2">
+                            <div className="space-y-1.5 sm:space-y-2">
                               {salesSummary &&
                                 Object.entries(
                                   salesSummary.paymentBreakdown
                                 ).map(([method, amount]) => (
                                   <div
                                     key={method}
-                                    className="flex items-center justify-between"
+                                    className="flex items-center justify-between text-xs sm:text-sm"
                                   >
-                                    <div className="flex items-center gap-2">
-                                      <CreditCard className="h-4 w-4" />
-                                      <span className="text-sm">{method}</span>
+                                    <div className="flex items-center gap-1.5 sm:gap-2">
+                                      <CreditCard className="h-3 w-3 sm:h-4 sm:w-4" />
+                                      <span>{method}</span>
                                     </div>
-                                    <span className="font-semibold">
+                                    <span className="font-semibold break-all">
                                       ₱{formatPrice(amount)}
                                     </span>
                                   </div>
@@ -1835,7 +2045,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
 
         {/* Receipt Dialog */}
         <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
-          <DialogContent className="max-w-sm">
+          <DialogContent className="max-w-sm" id="receipt-content">
             <DialogHeader>
               <DialogTitle>Order Receipt</DialogTitle>
               <div className="mt-1 space-y-1 text-xs text-muted-foreground">
@@ -1950,6 +2160,23 @@ export default function POSClient({ initialShift }: POSClientProps) {
               )}
             </div>
 
+            {/* <div className="mt-4 flex gap-2">
+              <Button
+                variant="outline"
+                onClick={handlePrintReceipt}
+                className="flex-1"
+              >
+                <Printer className="mr-2 h-4 w-4" /> Print
+              </Button>
+              <Button
+                onClick={handleNewOrder}
+                disabled={isSubmitting}
+                className="flex-1"
+              >
+                Mark Order as Complete
+              </Button>
+            </div> */}
+
             <Button
               className="mt-4 w-full"
               onClick={async () => {
@@ -2034,6 +2261,56 @@ export default function POSClient({ initialShift }: POSClientProps) {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Void Confirmation Dialog */}
+        <AlertDialog
+          open={!!voidOrderId}
+          onOpenChange={(open) => !open && setVoidOrderId(null)}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Void Order</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to void this order? This action cannot be
+                undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmVoid}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                Yes, Void Order
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Complete Confirmation Dialog */}
+        <AlertDialog
+          open={!!completeOrderId}
+          onOpenChange={(open) => !open && setCompleteOrderId(null)}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Complete Order</AlertDialogTitle>
+              <AlertDialogDescription>
+                Mark this order as completed? This will move it to the completed
+                orders list.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmComplete}
+                className="bg-green-600 hover:bg-green-700"
+              >
+                Yes, Complete Order
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <AlertDialog
           open={closeShiftDialogOpen}

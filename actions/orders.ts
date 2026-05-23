@@ -66,6 +66,7 @@ type RawOrderWithItems = {
   customer_name: string
   payment_method: string
   total: number
+  status: string
   created_at: string
   order_items:
     | {
@@ -87,11 +88,13 @@ export type OrderWithItems = {
   customer_name: string
   payment_method: string
   total: number
+  status: string
   created_at: string
   items: {
     product_name: string
     quantity: number
     flavors: string[]
+    discount_type: string | null
     total_price: number
   }[]
 }
@@ -111,6 +114,7 @@ export async function getOrders(
       customer_name,
       payment_method,
       total,
+      status,
       created_at,
       order_items (
         product_name,
@@ -172,6 +176,7 @@ export async function getOrders(
     customer_name: order.customer_name,
     payment_method: order.payment_method,
     total: order.total,
+    status: order.status,
     created_at: order.created_at,
     items: order.order_items || [],
   }))
@@ -246,4 +251,32 @@ export async function getSalesSummary(filter: DateFilter = "all") {
     bestSellerProduct,
     mostPopularFlavor,
   }
+}
+
+export async function voidOrder(
+  orderId: string
+): Promise<{ success: boolean }> {
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from("orders")
+    .update({ status: "voided" })
+    .eq("id", orderId)
+    .eq("status", "pending")
+  if (error) return { success: false }
+  revalidatePath("/")
+  return { success: true }
+}
+
+export async function completeOrder(
+  orderId: string
+): Promise<{ success: boolean }> {
+  const supabase = await createClient()
+  const { error } = await supabase
+    .from("orders")
+    .update({ status: "completed" })
+    .eq("id", orderId)
+    .eq("status", "pending")
+  if (error) return { success: false }
+  revalidatePath("/")
+  return { success: true }
 }

@@ -69,6 +69,7 @@ import {
   getClosedShifts,
   ShiftFullDetails,
   getShiftFullDetails,
+  ClosedShift,
 } from "@/actions/shifts"
 import {
   completeOrder,
@@ -93,6 +94,7 @@ import {
   CashTransaction,
   getCashTransactions,
 } from "@/actions/cashTransactions"
+import { format } from "date-fns"
 
 // ----------------------------------------------------------------------
 // Types & Constants (unchanged)
@@ -783,7 +785,7 @@ export default function POSClient({ initialShift }: POSClientProps) {
   )
   const [shiftTotalSales, setShiftTotalSales] = useState(0)
 
-  const [closedShifts, setClosedShifts] = useState<Shift[]>([])
+  const [closedShifts, setClosedShifts] = useState<ClosedShift[]>([])
   const [isLoadingShifts, setIsLoadingShifts] = useState(false)
   const [selectedShiftDetails, setSelectedShiftDetails] =
     useState<ShiftFullDetails | null>(null)
@@ -1756,28 +1758,17 @@ export default function POSClient({ initialShift }: POSClientProps) {
                                   }
                                 }}
                               >
+                                {/* Top row: Date and Total Sales */}
                                 <div className="flex justify-between font-semibold">
                                   <span>
-                                    {new Date(
-                                      s.start_time
-                                    ).toLocaleDateString()}
+                                    {format(s.start_time, "MMM dd, yyyy")}
                                   </span>
-                                  <span
-                                    className={
-                                      s.cash_difference !== null
-                                        ? s.cash_difference > 0
-                                          ? "text-green-600"
-                                          : s.cash_difference < 0
-                                            ? "text-red-600"
-                                            : ""
-                                        : ""
-                                    }
-                                  >
-                                    {s.cash_difference !== null
-                                      ? `${s.cash_difference > 0 ? "Over" : s.cash_difference < 0 ? "Short" : ""} ₱${formatPrice(Math.abs(s.cash_difference))}`
-                                      : "—"}
+                                  <span className="text-gray-600">
+                                    ₱{formatPrice(s.total_sales)}
                                   </span>
                                 </div>
+
+                                {/* Cashier & timestamps */}
                                 <div className="mt-1 text-xs text-muted-foreground">
                                   <div>Cashier: {s.cashier_name}</div>
                                   <div>
@@ -1791,6 +1782,8 @@ export default function POSClient({ initialShift }: POSClientProps) {
                                       : "—"}
                                   </div>
                                 </div>
+
+                                {/* Expected vs Ending */}
                                 <div className="mt-2 grid grid-cols-2 gap-1 text-xs">
                                   <div>
                                     Expected:{" "}
@@ -1804,6 +1797,25 @@ export default function POSClient({ initialShift }: POSClientProps) {
                                       ? `₱${formatPrice(s.ending_cash)}`
                                       : "—"}
                                   </div>
+                                </div>
+
+                                {/* Over / Short difference */}
+                                <div className="mt-1 text-left text-xs font-medium">
+                                  <span
+                                    className={
+                                      s.cash_difference !== null
+                                        ? s.cash_difference > 0
+                                          ? "text-green-600"
+                                          : s.cash_difference < 0
+                                            ? "text-red-600"
+                                            : ""
+                                        : ""
+                                    }
+                                  >
+                                    {s.cash_difference !== null
+                                      ? `${s.cash_difference > 0 ? "Over" : s.cash_difference < 0 ? "Short" : "Even"} ₱${formatPrice(Math.abs(s.cash_difference))}`
+                                      : "—"}
+                                  </span>
                                 </div>
                               </div>
                             ))

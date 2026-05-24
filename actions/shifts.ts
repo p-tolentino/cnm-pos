@@ -123,11 +123,28 @@ export async function closeShift(
   return { success: true }
 }
 
-export async function getClosedShifts(): Promise<Shift[]> {
+type OrdersTotal = {
+  total: number
+}
+
+type ShiftWithOrders = Shift & {
+  orders_total: OrdersTotal[] | null
+}
+
+export type ClosedShift = Shift & {
+  total_sales: number
+}
+
+export async function getClosedShifts(): Promise<ClosedShift[]> {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from("shifts")
-    .select("*")
+    .select(
+      `
+      *,
+      orders_total:orders(total)
+    `
+    )
     .not("end_time", "is", null)
     .order("start_time", { ascending: false })
 
@@ -136,8 +153,17 @@ export async function getClosedShifts(): Promise<Shift[]> {
     return []
   }
 
-  // Explicitly cast to Shift[] (Supabase returns the correct shape)
-  return (data as Shift[]) || []
+  // Safe type assertion – the query guarantees the shape
+  const shifts = data as ShiftWithOrders[] | null
+  if (!shifts) return []
+
+  return shifts.map((shift) => ({
+    ...shift,
+    total_sales: (shift.orders_total || []).reduce(
+      (sum, order) => sum + order.total,
+      0
+    ),
+  }))
 }
 
 export type ShiftFullDetails = {

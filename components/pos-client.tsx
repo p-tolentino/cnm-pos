@@ -700,14 +700,14 @@ const TransactionCard = ({
             <span className="text-xs">Void</span>
           </Button>
           <Button
-            className="h-full w-20 flex-col gap-1 rounded-none bg-green-600 px-2 hover:bg-green-700"
+            className="h-full w-20 flex-col gap-1 rounded-none bg-green-200 px-2 text-green-700 hover:bg-green-300"
             onClick={() => {
               setIsRevealed(false)
               onComplete()
             }}
           >
             <CheckCircle className="h-6 w-6" />
-            <span className="text-xs">Complete</span>
+            <span className="text-xs">Served</span>
           </Button>
         </div>
       )}

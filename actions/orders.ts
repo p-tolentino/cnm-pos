@@ -184,8 +184,9 @@ export async function getOrders(
 
 export async function getSalesSummary(filter: DateFilter = "all") {
   const orders = await getOrders(filter)
-  const totalSales = orders.reduce((sum, order) => sum + order.total, 0)
-  const orderCount = orders.length
+  const nonVoidOrders = orders.filter((order) => order.status !== "voided")
+  const totalSales = nonVoidOrders.reduce((sum, order) => sum + order.total, 0)
+  const orderCount = nonVoidOrders.length
   const averageOrderValue = orderCount > 0 ? totalSales / orderCount : 0
 
   const paymentBreakdown: Record<string, number> = {}
@@ -199,7 +200,7 @@ export async function getSalesSummary(filter: DateFilter = "all") {
   // Flavor counts
   const flavorCounts: Record<string, number> = {}
 
-  orders.forEach((order) => {
+  nonVoidOrders.forEach((order) => {
     order.items.forEach((item) => {
       productSales[item.product_name] =
         (productSales[item.product_name] || 0) + item.quantity
@@ -259,6 +260,7 @@ export async function getShiftSalesTotal(shiftId: string): Promise<number> {
     .from("orders")
     .select("total")
     .eq("shift_id", shiftId)
+    .neq("status", "voided")
 
   if (error) return 0
   return data.reduce((sum, o) => sum + o.total, 0)
@@ -271,6 +273,8 @@ export async function getShiftCashSalesTotal(shiftId: string): Promise<number> {
     .select("total")
     .eq("shift_id", shiftId)
     .eq("payment_method", "Cash")
+    .neq("status", "voided")
+
   if (error) return 0
   return data.reduce((sum, o) => sum + o.total, 0)
 }

@@ -87,6 +87,7 @@ export async function closeShift(
     .select("total")
     .eq("shift_id", shiftId)
     .eq("payment_method", "Cash")
+    .neq("status", "voided")
   if (ordersError) return { success: false, error: "Could not fetch sales" }
   const totalCashSales = orders.reduce((sum, o) => sum + o.total, 0)
 
